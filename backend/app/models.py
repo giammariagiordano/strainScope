@@ -157,6 +157,7 @@ class Issue(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
     updated_at: Mapped[datetime] = mapped_column(DateTime)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    comments_count: Mapped[int | None] = mapped_column(Integer)  # as reported by GitHub, to verify completeness
 
     __table_args__ = (UniqueConstraint("project_id", "number"),)
 

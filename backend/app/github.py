@@ -59,6 +59,7 @@ class GitHubClient:
         self.http = httpx.Client(timeout=60, follow_redirects=True, headers={"Accept": "application/vnd.github+json"})
         self._last_publish = 0.0
         self._last_refresh = time.time()
+        self.suspicious_pages = 0
 
     # -- token pool -----------------------------------------------------------------
 
@@ -159,19 +160,57 @@ class GitHubClient:
             return r
         raise GitHubError(f"GET {url} failed after retries")
 
-    def paginate(self, path: str, params: dict | None = None, start_page: int = 1) -> Iterator[tuple[int, list]]:
-        """Yield (page_number, items) until the last page."""
+    def get_optional(self, path: str, params: dict | None = None) -> dict | None:
+        """GET a single resource; None if GitHub says it does not exist (404) or was deleted (410)."""
+        try:
+            return self.get(path, params).json()
+        except GitHubError as e:
+            if " -> 404" in str(e) or " -> 410" in str(e):
+                return None
+            raise
+
+    EMPTY_RETRIES = (2, 4, 8, 16)  # seconds
+
+    def paginate(
+        self, path: str, params: dict | None = None, start_page: int = 1, retry_empty: bool = True
+    ) -> Iterator[tuple[int, list]]:
+        """Yield (page_number, items) until the last page, following `Link: rel="next"`.
+
+        GitHub sometimes answers 200 with an empty or truncated page that should hold data (seen on the
+        issues and comments endpoints). A page is suspicious when it is empty although it is the first page
+        or the previous page was full, or when it is short but still has a next link; such pages are fetched
+        again with backoff before being accepted. Disable `retry_empty` for endpoints where an empty first
+        page is common and legitimate (e.g. the reviews of a pull request).
+        """
         page = start_page
+        url, query = path, {**(params or {}), "per_page": 100, "page": page}
+        prev_full = False
         while True:
-            r = self.get(path, {**(params or {}), "per_page": 100, "page": page})
-            items = r.json()
-            if not isinstance(items, list):
-                raise GitHubError(f"GET {path}: expected a list, got {str(items)[:200]}")
+            # An empty first page is often legitimate (no issues yet): retry briefly. After a full page, an
+            # empty or short-with-next page is almost certainly wrong: retry with the full backoff.
+            ladder = self.EMPTY_RETRIES if prev_full else self.EMPTY_RETRIES[:2]
+            for attempt, wait in enumerate((0, *ladder)):
+                if wait:
+                    self.suspicious_pages += 1
+                    log.warning("GitHub returned a suspicious page for %s (page %s); retry %s in %ss", path, page, attempt, wait)
+                    if self.on_wait:
+                        self.on_wait(wait)
+                    time.sleep(wait)
+                r = self.get(url, query)
+                items = r.json()
+                if not isinstance(items, list):
+                    raise GitHubError(f"GET {path}: expected a list, got {str(items)[:200]}")
+                nxt = r.links.get("next", {}).get("url")
+                suspicious = (not items and (page == start_page or prev_full)) or (0 < len(items) < 100 and nxt)
+                if not (retry_empty and suspicious):
+                    break
             if not items:
                 return
             yield page, items
-            if 'rel="next"' not in r.headers.get("link", ""):
+            if not nxt:
                 return
+            prev_full = len(items) == 100
+            url, query = nxt, None  # the next URL already carries every parameter, including the cursor
             page += 1
 
     def close(self):

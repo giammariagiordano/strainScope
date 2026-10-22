@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import settings
@@ -47,3 +47,22 @@ def init_db():
     from . import models  # noqa: F401  register tables
 
     Base.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+def _add_missing_columns():
+    """Minimal forward migration: add nullable columns that newer versions of the models define.
+
+    `create_all` creates missing tables but never alters existing ones, so databases created by an older
+    version would lack new columns. Only nullable additions are handled; anything else needs a real migration.
+    """
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not insp.has_table(table.name):
+                continue
+            existing = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name not in existing and col.nullable:
+                    ddl = col.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {ddl}'))

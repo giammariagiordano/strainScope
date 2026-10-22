@@ -105,6 +105,22 @@ re-running it never duplicates data.
 Stages 7–10 only compute on stored data: they are fast and can be re-run on their own
 (e.g. after changing a threshold) without mining again.
 
+## Completeness checks
+
+GitHub's listing endpoints sometimes answer `200` with an empty or truncated page (reproducible with the
+official `gh` CLI), which would silently drop data. The miner therefore:
+
+- follows the `Link: rel="next"` URL (some endpoints use cursor pagination) and re-fetches suspicious
+  pages with backoff: an empty page after a full one, a short page that still has a next link, or an
+  empty first page (briefly, since empty first pages are often legitimate);
+- **issues/PRs**: share one numbering 1..N, so every number missing from the listing is fetched
+  individually; numbers that do not exist (deleted, transferred, discussions) answer 404/410 and are skipped;
+- **issue comments**: GitHub reports each issue's comment count; threads with fewer saved comments are
+  re-fetched one by one.
+
+Review comments and PR reviews have no cheap count to check against and rely on the retries only.
+Recovered items are reported in the stage message and in the activity log.
+
 ## Pause and resume
 
 - **Pause**: the UI sets `pause_requested`. The worker checks the flag after every batch, saves the
