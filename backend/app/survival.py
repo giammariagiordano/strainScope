@@ -55,6 +55,10 @@ COVARIATES = [
     Covariate("active_months", "Active months (window)", "Months with any activity in the window.", default=False),
     Covariate("cum_active_months", "Experience", "Cumulative active months before the interval.", count=True),
     Covariate("gap_before", "Months since previous activity", "Inactive months between the previous active month and this one (0 if consecutive).", count=True, default=False),
+    Covariate("toxic_emitted_share", "Toxicity emitted", "Share of the window's messages classified as toxic (ToxiCR); 0 without messages.", default=False),
+    Covariate("toxic_received", "Toxic messages received", "Toxic messages by others on the developer's issues/PRs in the window (ToxiCR).", count=True, default=False),
+    Covariate("negative_emitted_share", "Negativity emitted", "Share of the window's messages with negative polarity (Senti4SD); 0 without messages.", default=False),
+    Covariate("negative_received", "Negative messages received", "Negative messages by others on the developer's issues/PRs in the window (Senti4SD).", count=True, default=False),
     Covariate("truck_factor_member", "Truck-factor member", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
 ]  # fmt: skip
 COVARIATE_KEYS = [c.key for c in COVARIATES]
@@ -87,6 +91,12 @@ def _finite(v) -> float | None:
 def _midx(month: str) -> int:
     y, m = month.split("-")
     return int(y) * 12 + int(m) - 1
+
+
+def _share(part: float, total: float) -> float:
+    if np.isnan(part) or np.isnan(total):
+        return np.nan
+    return part / total if total else 0.0
 
 
 def _rolling(arr: np.ndarray, window: int, how: str) -> np.ndarray:
@@ -123,13 +133,21 @@ def subject_rows(
     n = last - first + 1
     idx = months - first
     dense = {}
-    for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened"):
+    for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened",
+                "messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received"):
         a = np.zeros(n)
-        a[idx] = values[col]
+        a[idx] = values.get(col, np.full(len(months), np.nan))  # NaN = not measured (tool not run)
         dense[col] = a
+    for col in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received"):
+        if np.isnan(dense[col]).all():
+            dense[col][:] = np.nan  # keep "not measured" for inactive months too
+        else:
+            dense[col] = np.nan_to_num(dense[col])
     active = np.zeros(n)
     active[idx] = 1
-    w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened")}
+    w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened",
+                                                               "messages", "toxic_emitted", "toxic_received",
+                                                               "negative_emitted", "negative_received")}  # fmt: skip
     w_active = _rolling(active, window, "sum")
     w_core = _rolling(dense["is_core"], window, "max")
     w_cent = _rolling(dense["centrality"], window, "max")
@@ -164,6 +182,10 @@ def subject_rows(
                 "active_months": w_active[i],
                 "cum_active_months": cum_active[i],
                 "gap_before": t - int(months[j - 1]) - 1 if j > 0 else 0,
+                "toxic_emitted_share": _share(w["toxic_emitted"][i], w["messages"][i]),
+                "toxic_received": w["toxic_received"][i],
+                "negative_emitted_share": _share(w["negative_emitted"][i], w["messages"][i]),
+                "negative_received": w["negative_received"][i],
                 "truck_factor_member": truck_factor_member,
             }
         )
@@ -200,7 +222,9 @@ def build_intervals(
     for (pid, did), g in dm.groupby(["project_id", "developer_id"], sort=False):
         stats["subjects"] += 1
         g = g.sort_values("midx")
-        values = {c: g[c].to_numpy(float) for c in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened")}
+        values = {c: g[c].to_numpy(float) for c in ("commits", "comments", "reviews", "off_hours_commits", "centrality",
+                                                     "is_core", "opened", "messages", "toxic_emitted", "toxic_received",
+                                                     "negative_emitted", "negative_received")}  # fmt: skip
         sub, status = subject_rows(
             g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
             k, window, min_active_months, outcome,
@@ -235,6 +259,14 @@ def fit_cox(
 
     warnings: list[str] = []
     df = intervals[["sid", "person", "project", "episode", "start", "stop", "event", *covariates]].copy()
+    unmeasured = df[covariates].isna().any(axis=1)
+    if unmeasured.any():
+        skipped = sorted(df.loc[unmeasured, "project"].unique())
+        warnings.append(
+            f"{len(skipped)} project(s) excluded because a selected covariate was not measured there "
+            f"(text classification not run): {', '.join(skipped[:5])}{'…' if len(skipped) > 5 else ''}."
+        )
+        df = df[~unmeasured]
     # One id per episode: with recurrent events lifelines expects one event per id. The partial
     # likelihood does not depend on the id; dependence between episodes is handled by clustering.
     df["eid"] = df["sid"] + ":" + df["episode"].astype(str)

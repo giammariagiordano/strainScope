@@ -56,6 +56,31 @@ def recover_orphans():
             log.info("recovered orphaned project %s", p.full_name)
 
 
+def upgrade_pipelines():
+    """Add stages introduced by a newer version to existing projects and recompute what depends on them.
+
+    Mining stages already done are kept; finished projects go back to the queue only to run the new
+    stages and the ones after them (e.g. text classification, then aggregation).
+    """
+    with session_scope() as s:
+        for p in s.scalars(select(Project).where(Project.status != "deleting")):
+            ensure_stage_runs(s, p.id)
+            if p.status != "done":
+                continue
+            s.flush()
+            runs = list(s.scalars(select(StageRun).where(StageRun.project_id == p.id).order_by(StageRun.position)))
+            first = next((r.position for r in runs if r.status != "done"), None)
+            if first is None:
+                continue
+            # Stages after one that never ran depend on it: recompute them too.
+            for r in runs:
+                if r.position > first and r.status == "done":
+                    r.status, r.cursor, r.done, r.total, r.message = "pending", {}, 0, None, None
+            p.status, p.finished_at = "queued", None
+            s.add(Log(project_id=p.id, message="New pipeline stages added: computing them on the mined data"))
+            log.info("upgraded pipeline of %s", p.full_name)
+
+
 def claim() -> ProjectRef | None:
     with session_scope() as s:
         candidates = s.scalars(
@@ -184,6 +209,7 @@ def main():
     signal.signal(signal.SIGTERM, _handle_signal)
     _retry(init_db)
     _retry(recover_orphans)
+    _retry(upgrade_pipelines)
     if not settings.github_tokens:
         log.warning("GITHUB_TOKENS not set: GitHub API limited to 60 requests/hour")
     log.info("worker started (db=%s)", settings.database_url.split("@")[-1])

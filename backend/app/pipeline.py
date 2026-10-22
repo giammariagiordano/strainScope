@@ -138,6 +138,7 @@ def registry() -> list[Stage]:
     from .stages.github_items import CommentsStage, IssuesStage, ReviewsStage
     from .stages.identities import IdentitiesStage
     from .stages.structural import StructuralStage
+    from .stages.text import SentimentStage, ToxicityStage
 
     return [
         CloneStage(),
@@ -148,16 +149,34 @@ def registry() -> list[Stage]:
         ReviewsStage(),
         BotsStage(),
         IdentitiesStage(),
+        ToxicityStage(),
+        SentimentStage(),
         AggregateStage(),
         StructuralStage(),
     ]
 
 
-STAGE_NAMES = [s.name for s in registry()]
+def stage_names() -> list[str]:
+    # A function, not a module constant: computing it at import time makes stage modules
+    # (which import this one) circular when they are imported first.
+    return [s.name for s in registry()]
 
 
-def ensure_stage_runs(db: Session, project_id: int):
-    existing = {r.stage for r in db.scalars(select(StageRun).where(StageRun.project_id == project_id))}
+def ensure_stage_runs(db: Session, project_id: int) -> bool:
+    """Create missing stage rows and keep positions in registry order.
+
+    When a newer version adds a stage in the middle of the pipeline, every later stage is reset to
+    `pending` so that it is recomputed with the new data. Returns True if anything was added.
+    """
+    runs = {r.stage: r for r in db.scalars(select(StageRun).where(StageRun.project_id == project_id))}
+    added_at = None
     for pos, stage in enumerate(registry()):
-        if stage.name not in existing:
+        run = runs.get(stage.name)
+        if run is None:
             db.add(StageRun(project_id=project_id, stage=stage.name, position=pos, status="pending", cursor={}))
+            added_at = pos if added_at is None else added_at
+            continue
+        run.position = pos
+        if added_at is not None and runs and run.status == "done":
+            run.status, run.cursor, run.done, run.total, run.message = "pending", {}, 0, None, None
+    return added_at is not None and bool(runs)

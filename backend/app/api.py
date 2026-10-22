@@ -33,7 +33,7 @@ from .dataset import LEVELS, VARIABLES, frame
 from .export import build_zip
 from . import tokens as token_store
 from .github import read_rate_state
-from .pipeline import STAGE_NAMES, ProjectRef, ensure_stage_runs, registry
+from .pipeline import ProjectRef, ensure_stage_runs, registry, stage_names
 from .stages.aggregate import is_off_hours
 
 app = FastAPI(title="StrainScope API")
@@ -96,7 +96,7 @@ def project_summary(s, p: Project) -> dict:
         "current_stage_label": STAGES[p.current_stage].label if p.current_stage in STAGES else None,
         "current_message": current.message if current else None,
         "stages_done": done,
-        "stages_total": len(STAGE_NAMES),
+        "stages_total": len(stage_names()),
         "error": p.error,
         "created_at": p.created_at.isoformat() + "Z",
         "finished_at": p.finished_at.isoformat() + "Z" if p.finished_at else None,
@@ -203,13 +203,13 @@ def resume(pid: int):
 
 @app.post("/api/projects/{pid}/rerun/{stage}")
 def rerun(pid: int, stage: str):
-    if stage not in STAGE_NAMES:
+    if stage not in stage_names():
         raise HTTPException(404, "Unknown stage")
     with session_scope() as s:
         p = get_project(s, pid)
         if p.status in ("running", "deleting"):
             raise HTTPException(409, "Pause the project before re-running a stage")
-        later = STAGE_NAMES[STAGE_NAMES.index(stage) :]
+        later = stage_names()[stage_names().index(stage) :]
         s.execute(
             update(StageRun)
             .where(StageRun.project_id == pid, StageRun.stage.in_(later))

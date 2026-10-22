@@ -12,6 +12,7 @@ def timeline(months, end, outcome="break", min_active=1):
     ones = np.ones(len(months))
     values = {c: ones.copy() for c in ("commits", "comments", "reviews", "centrality", "opened")}
     values |= {"off_hours_commits": np.zeros(len(months)), "is_core": np.zeros(len(months))}
+    values |= {c: ones.copy() for c in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received")}
     return subject_rows(months, values, 0, end, K, WINDOW, min_active, outcome)
 
 
@@ -74,3 +75,22 @@ def test_covariates_are_lagged():
     assert first_after_pause["commits"] == 0 and first_after_pause["active_months"] == 0
     month3 = next(r for r in rows if r["stop"] == 3)
     assert month3["commits"] == 3 and month3["active_months"] == 3  # months 0-2
+
+
+def test_strain_covariates_use_the_lagged_window():
+    months = np.array([0, 1, 2, 3])
+    ones, zeros = np.ones(4), np.zeros(4)
+    values = {c: ones.copy() for c in ("commits", "comments", "reviews", "centrality", "opened")}
+    values |= {"off_hours_commits": zeros, "is_core": zeros, "negative_emitted": zeros, "negative_received": zeros,
+               "messages": np.array([4.0, 4, 4, 4]), "toxic_emitted": np.array([0.0, 2, 0, 0]),
+               "toxic_received": np.array([1.0, 0, 0, 3])}
+    rows, _ = subject_rows(months, values, 0, 60, K, WINDOW, 1, "abandonment")
+    month3 = next(r for r in rows if r["stop"] == 3)
+    assert month3["toxic_emitted_share"] == 2 / 12  # months 0-2: 2 toxic of 12 messages
+    assert month3["toxic_received"] == 1  # month 3's own 3 toxic replies are not in its window
+
+
+def test_unmeasured_text_metrics_stay_missing():
+    rows, _ = subject_rows(np.array([0, 1, 2]), {c: np.ones(3) for c in ("commits", "comments", "reviews", "centrality", "opened", "off_hours_commits", "is_core")},
+                           0, 60, K, WINDOW, 1, "abandonment")  # fmt: skip
+    assert all(np.isnan(r["toxic_emitted_share"]) and np.isnan(r["toxic_received"]) for r in rows)

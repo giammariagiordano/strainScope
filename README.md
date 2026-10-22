@@ -134,6 +134,43 @@ compares both APIs field by field; results:
 | 10up/classifai | 766 | 1,392 | 766 requests, 434 s | 8 requests, 20 s | yes |
 Recovered items are reported in the stage message and in the activity log.
 
+## Text classification (sentiment and toxicity)
+
+Two pipeline stages classify every issue/PR (title + body), comment and review written by a human. Text is
+cleaned first so that only the author's own words are scored: quoted replies (`> ...`), fenced code, HTML
+comments (issue templates) and @mentions are removed. Bots and empty texts are skipped. Results feed
+monthly *emitted* and *received* measures (received = messages by others on the developer's own issues/PRs),
+which are available as correlation variables and Cox covariates. Unmeasured values stay missing, never zero.
+
+The tools run locally in their own environments under `external/` (ignored by git; their licenses stay
+separate), as persistent subprocesses (`backend/app/tools/*_runner.py`).
+
+| Stage | Tool | Status |
+|---|---|---|
+| `toxicity` | ToxiCR (Sarker et al., TOSEM 2023), random forest on TF-IDF with keyword removal | Installed; **off by default** (`ENABLE_TOXICITY=true`) |
+| `sentiment` | Senti4SD (Calefato et al., EMSE 2018) via pySenti4SD | Not installed yet |
+
+**ToxiCR validation.** Its 10-fold cross-validation was reproduced on this machine with the authors' code
+(F1 on toxic comments 0.865 vs 0.872 published). On GitHub issue/PR comments, however, it does not transfer:
+on 10up/classifai all 13 flagged texts were false positives ("That all sounds good to me", bug-report
+templates). ToxiCR was trained on Gerrit code reviews (OpenStack, Android, Chromium). The stage therefore stays
+disabled until validated on GitHub data.
+
+Installing ToxiCR (BERT needs TensorFlow 2.5, unavailable on Apple Silicon; the random forest needs only
+scikit-learn):
+
+```bash
+cd external
+git clone https://github.com/WSU-SEAL/ToxiCR.git
+python3.10 -m venv toxicr-venv
+toxicr-venv/bin/pip install numpy==1.21.6 pandas==1.3.5 scikit-learn==1.0.2 sklearn-pandas==2.2.0 nltk==3.8.1 openpyxl==3.1.2
+toxicr-venv/bin/python -m nltk.downloader -d nltk_data punkt
+cd ToxiCR && NLTK_DATA=../nltk_data ../toxicr-venv/bin/python ToxiCR.py --algo RF --embed tfidf --keyword --mode pretrain
+```
+
+New stages are added to existing projects automatically when the worker starts: mining stages are kept and
+only the new stages and those after them (aggregation, structural metrics) are recomputed.
+
 ## Pause and resume
 
 - **Pause**: the UI sets `pause_requested`. The worker checks the flag after every batch, saves the

@@ -158,6 +158,10 @@ class Issue(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
     comments_count: Mapped[int | None] = mapped_column(Integer)  # as reported by GitHub, to verify completeness
+    # Text classification of title + body: 1 / 0, or -1 when there is nothing to classify (bot, empty).
+    toxic: Mapped[int | None] = mapped_column(Integer)
+    toxicity_p: Mapped[float | None] = mapped_column(Float)
+    sentiment: Mapped[str | None] = mapped_column(String(10))  # positive | neutral | negative | none
 
     __table_args__ = (UniqueConstraint("project_id", "number"),)
 
@@ -174,6 +178,9 @@ class Comment(Base):
     body: Mapped[str | None] = mapped_column(Text)
     review_state: Mapped[str | None] = mapped_column(String(30))
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    toxic: Mapped[int | None] = mapped_column(Integer)  # 1 / 0, -1 = nothing to classify
+    toxicity_p: Mapped[float | None] = mapped_column(Float)
+    sentiment: Mapped[str | None] = mapped_column(String(10))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     __table_args__ = (UniqueConstraint("project_id", "kind", "gh_id"),)
@@ -195,6 +202,12 @@ class DeveloperMonth(Base):
     prs_opened: Mapped[int] = mapped_column(Integer, default=0)
     comments: Mapped[int] = mapped_column(Integer, default=0)
     reviews: Mapped[int] = mapped_column(Integer, default=0)
+    messages: Mapped[int | None] = mapped_column(Integer)  # classified issue bodies, comments, reviews
+    toxic_emitted: Mapped[int | None] = mapped_column(Integer)
+    received: Mapped[int | None] = mapped_column(Integer)  # classified messages by others on own issues/PRs
+    toxic_received: Mapped[int | None] = mapped_column(Integer)
+    negative_emitted: Mapped[int | None] = mapped_column(Integer)
+    negative_received: Mapped[int | None] = mapped_column(Integer)
     centrality: Mapped[float] = mapped_column(Float, default=0.0)
     degree: Mapped[int] = mapped_column(Integer, default=0)
     is_core: Mapped[bool] = mapped_column(Boolean, default=False)

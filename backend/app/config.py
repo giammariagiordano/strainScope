@@ -27,6 +27,11 @@ class Settings:
     pseudonym_salt: str | None = os.getenv("PSEUDONYM_SALT")
     show_real_identities: bool = os.getenv("SHOW_REAL_IDENTITIES", "false").lower() in ("1", "true", "yes")
     heartbeat_timeout_s: int = int(os.getenv("HEARTBEAT_TIMEOUT_S", "120"))
+    # ToxiCR has not been validated on GitHub issue/PR comments (in-domain precision was near zero on a
+    # sample), so its stage is off until enabled explicitly.
+    enable_toxicity: bool = os.getenv("ENABLE_TOXICITY", "false").lower() in ("1", "true", "yes")
+    # External text classifiers (installed outside the repository, see README "Text classification").
+    external_dir: Path = field(default_factory=lambda: Path(os.getenv("EXTERNAL_DIR", BACKEND_DIR.parent / "external")).resolve())
 
     def __post_init__(self):
         if not self.database_url:

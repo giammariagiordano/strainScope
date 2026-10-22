@@ -33,6 +33,11 @@ DEVELOPER_MONTH_VARS = [
     Variable("centrality", "Centrality", "Eigenvector centrality in the developer network (sliding window).", "score"),
     Variable("degree", "Degree", "Number of distinct collaborators in the developer network (sliding window)."),
     Variable("is_core", "Core", "1 if the developer is core in the month (cumulative-centrality threshold).", "binary"),
+    Variable("messages", "Messages", "Classified messages written (issue/PR bodies, comments, reviews)."),
+    Variable("toxic_emitted_share", "Toxicity emitted", "Share of the month's messages classified as toxic by ToxiCR.", "share"),
+    Variable("toxic_received_share", "Toxicity received", "Share of messages written by others on the developer's issues/PRs that ToxiCR classifies as toxic.", "share"),
+    Variable("negative_emitted_share", "Negativity emitted", "Share of the month's messages with negative polarity (Senti4SD).", "share"),
+    Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity (Senti4SD).", "share"),
     Variable("pause_start", "Long pause starts", "1 if this month is followed by at least the threshold of inactivity and the developer later returns.", "binary"),
     Variable("exit", "Exit month", "1 if this is the developer's last active month and they then stay inactive for at least the abandonment threshold before the end of observation.", "binary"),
 ]  # fmt: skip
@@ -54,6 +59,11 @@ DEVELOPER_VARS = [
     Variable("mean_centrality", "Mean centrality", "Mean monthly eigenvector centrality over active months.", "score"),
     Variable("max_centrality", "Max centrality", "Highest monthly eigenvector centrality.", "score"),
     Variable("inactive_months_at_end", "Inactive months at end", "Months between the developer's last activity and the project's last observed month."),
+    Variable("messages", "Messages", "Classified messages written over all active months."),
+    Variable("toxic_emitted_share", "Toxicity emitted", "Share of all messages classified as toxic by ToxiCR.", "share"),
+    Variable("toxic_received_share", "Toxicity received", "Share of messages by others on the developer's issues/PRs classified as toxic.", "share"),
+    Variable("negative_emitted_share", "Negativity emitted", "Share of all messages with negative polarity (Senti4SD).", "share"),
+    Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity.", "share"),
     Variable("long_pauses", "Long pauses", "Pauses of at least the threshold after which the developer came back."),
     Variable("abandoned", "Abandoned", "1 if the developer has been inactive for at least the abandonment threshold at the end of observation. Right-censored: recent leavers count as 0.", "binary"),
 ]  # fmt: skip
@@ -80,6 +90,8 @@ def developer_month_frame(
             DeveloperMonth.off_hours_commits, DeveloperMonth.weekend_commits,
             DeveloperMonth.issues_opened, DeveloperMonth.prs_opened, DeveloperMonth.comments,
             DeveloperMonth.reviews, DeveloperMonth.centrality, DeveloperMonth.degree, DeveloperMonth.is_core,
+            DeveloperMonth.messages, DeveloperMonth.toxic_emitted, DeveloperMonth.received,
+            DeveloperMonth.toxic_received, DeveloperMonth.negative_emitted, DeveloperMonth.negative_received,
         )
         .join(Developer, Developer.id == DeveloperMonth.developer_id)
         .join(Project, Project.id == DeveloperMonth.project_id)
@@ -98,6 +110,12 @@ def developer_month_frame(
     df["off_hours_share"] = df["off_hours_commits"] / commits
     df["weekend_share"] = df["weekend_commits"] / commits
     df["is_core"] = df["is_core"].astype(int)
+    strain = ["messages", "toxic_emitted", "received", "toxic_received", "negative_emitted", "negative_received"]
+    df[strain] = df[strain].astype(float)  # None (not measured) -> NaN
+    df["toxic_emitted_share"] = df["toxic_emitted"] / df["messages"].replace(0, np.nan)
+    df["toxic_received_share"] = df["toxic_received"] / df["received"].replace(0, np.nan)
+    df["negative_emitted_share"] = df["negative_emitted"] / df["messages"].replace(0, np.nan)
+    df["negative_received_share"] = df["negative_received"] / df["received"].replace(0, np.nan)
     df["truck_factor_member"] = df["truck_factor_member"].astype(int)
     # Abandonment: inactivity gap between a developer's last month and the project's last observed month.
     project_end = df.groupby("project_id")["month"].transform("max")
@@ -111,7 +129,8 @@ def developer_month_frame(
     df["pause_start"] = ((nxt - midx - 1) >= abandon_months).astype(int)
     return df[
         ["project_id", "developer_id", "project", "developer", "month", "truck_factor_member",
-         "off_hours_commits", "weekend_commits", "inactive_months_at_end", *(v.key for v in DEVELOPER_MONTH_VARS)]
+         "off_hours_commits", "weekend_commits", "inactive_months_at_end", "toxic_emitted", "received",
+         "toxic_received", "negative_emitted", "negative_received", *(v.key for v in DEVELOPER_MONTH_VARS)]
     ]  # fmt: skip
 
 
@@ -148,6 +167,12 @@ def developer_frame(
         inactive_months_at_end=("inactive_months_at_end", "first"),
         abandoned=("exit", "max"),
         long_pauses=("pause_start", "sum"),
+        messages=("messages", lambda x: x.sum(min_count=1)),
+        toxic_emitted=("toxic_emitted", lambda x: x.sum(min_count=1)),
+        received=("received", lambda x: x.sum(min_count=1)),
+        toxic_received=("toxic_received", lambda x: x.sum(min_count=1)),
+        negative_emitted=("negative_emitted", lambda x: x.sum(min_count=1)),
+        negative_received=("negative_received", lambda x: x.sum(min_count=1)),
     ).reset_index()
     out["tenure_months"] = [_month_diff(a, b) + 1 for a, b in zip(out["first_month"], out["last_month"])]
     out["core_share"] = out["core_months"] / out["active_months"]
@@ -157,6 +182,10 @@ def developer_frame(
     out["off_hours_share"] = out["off_hours_commits"] / commits
     out["weekend_share"] = out["weekend_commits"] / commits
     out["issues_prs_opened"] = out["issues_opened"] + out["prs_opened"]
+    out["toxic_emitted_share"] = out["toxic_emitted"] / out["messages"].replace(0, np.nan)
+    out["toxic_received_share"] = out["toxic_received"] / out["received"].replace(0, np.nan)
+    out["negative_emitted_share"] = out["negative_emitted"] / out["messages"].replace(0, np.nan)
+    out["negative_received_share"] = out["negative_received"] / out["received"].replace(0, np.nan)
     return out[
         ["project_id", "developer_id", "project", "developer", "first_month", "last_month",
          *(v.key for v in DEVELOPER_VARS)]
