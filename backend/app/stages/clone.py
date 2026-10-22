@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 
@@ -5,15 +6,22 @@ from ..pipeline import Stage, StageContext
 
 
 def git(*args: str, cwd=None) -> str:
-    return subprocess.run(
-        ["git", "-c", "core.quotePath=false", *args],
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    ).stdout
+    try:
+        return subprocess.run(
+            ["git", "-c", "core.quotePath=false", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            # Never wait for credentials: a private or deleted repository must fail, not hang the worker.
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        ).stdout
+    except subprocess.CalledProcessError as e:
+        detail = (e.stderr or "").strip().splitlines()
+        hint = " (deleted, private, or never existed)" if any("not found" in l.lower() for l in detail) else ""
+        raise RuntimeError(f"git {args[0]} failed: {detail[-1] if detail else e}{hint}") from None
 
 
 class CloneStage(Stage):

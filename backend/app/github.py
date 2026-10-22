@@ -55,7 +55,8 @@ class GitHubClient:
         self.tokens: list[TokenState] = []
         self._sync(list(tokens) if self._fixed else all_tokens())
         self.on_wait = on_wait
-        self.http = httpx.Client(timeout=60, headers={"Accept": "application/vnd.github+json"})
+        # Renamed repositories answer 301 with a JSON body: follow the redirect instead of reading it as data.
+        self.http = httpx.Client(timeout=60, follow_redirects=True, headers={"Accept": "application/vnd.github+json"})
         self._last_publish = 0.0
         self._last_refresh = time.time()
 
@@ -164,6 +165,8 @@ class GitHubClient:
         while True:
             r = self.get(path, {**(params or {}), "per_page": 100, "page": page})
             items = r.json()
+            if not isinstance(items, list):
+                raise GitHubError(f"GET {path}: expected a list, got {str(items)[:200]}")
             if not items:
                 return
             yield page, items
