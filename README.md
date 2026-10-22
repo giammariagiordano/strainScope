@@ -174,19 +174,34 @@ first-order partial-correlation formula.
 |---|---|---|
 | developer | `inactive_months_at_end` | Months between last activity and the project's last observed month |
 | developer | `abandoned` | 1 if `inactive_months_at_end ≥ ABANDON_MONTHS` |
+| developer | `long_pauses` | Pauses of ≥ `ABANDON_MONTHS` after which the developer came back |
 | developer-month | `exit` | 1 in the last active month of a developer who then abandoned |
+| developer-month | `pause_start` | 1 in an active month followed by a pause of ≥ `ABANDON_MONTHS` and a return |
 
 Right-censoring: developers who left less than the threshold before the end of observation count as not
 abandoned. One-off contributors trivially "abandon"; use the minimum-active-months filter to exclude them.
 
 ### Survival analysis (time to abandonment)
-Counting-process design, one subject per developer × project, time in months since entry:
+Counting-process design, one subject per developer × project, time in calendar months since entry:
 
 - **Entry** after the developer's N-th active month (left truncation; default N = 1). Filtering on *total*
   active months would use future information (immortal-time bias), so the filter is implemented as delayed entry.
-- **Event**: abandonment = last active month followed by ≥ K inactive months (`ABANDON_MONTHS`).
-  Events are only confirmed up to K months before the project's last observed month; subjects still at
-  risk then are administratively censored.
+- **Risk set = active months only.** Each row asks "after this month, does the developer stop?". During a
+  pause the developer is not at risk and re-enters when they come back. Keeping pause months at risk would
+  teach the model that inactivity protects from leaving, because those months can never be event months.
+- **Event**, selectable in the UI:
+  - **Abandonment** (default): the developer stops and never comes back. A pause followed by a return is
+    never abandonment, however long. The threshold K (`ABANDON_MONTHS`, default 12) is needed only because
+    the future is unknown: a final silence counts as abandonment only if it lasts ≥ K months before the end
+    of the data; more recent exits are censored (they may still return).
+  - **Any long pause**: every pause of ≥ K months is an event, with or without return. A developer can have
+    several (recurrent events, Andersen–Gill), so standard errors should be clustered by person.
+
+  Example: active until January 2020, silent for all of 2020, back in February 2021 and still active.
+  Abandonment: no event, never at risk during 2020. Long pause: one event in January 2020, at risk again
+  from February 2021.
+- Pauses that start in the entry month are not at risk (the entry month never is), so the survival counts
+  can be lower than the `long_pauses` variable of the correlation dataset.
 - **Time-varying covariates** for month t summarize months t−W…t−1 (default W = 3), lagged so the activity
   that marks the exit month never enters its own covariates: core (any month), max centrality, off-hours
   share, commits, comments, reviews, issues/PRs opened, active months in the window, cumulative experience.
@@ -203,7 +218,7 @@ Counting-process design, one subject per developer × project, time in months si
   lifelines' `proportional_hazard_test`. Covariates with p < 0.05 are flagged.
 - **Diagnostics in the UI**: events per covariate < 10, (quasi-)separation, few clusters, PH violations,
   unstratified pooling.
-- **Kaplan–Meier** curves by a grouping measured at entry (core, off-hours above/below median, or truck factor
+- **Kaplan–Meier** curves of time to the *first* event, by a grouping measured at entry (core, off-hours above/below median, or truck factor
   with its look-ahead caveat) with a log-rank test.
 Estimates come from `lifelines.CoxTimeVaryingFitter` (Efron ties). Score and Schoenfeld residuals,
 the information matrix, the sandwich variance and the PH test are computed in `backend/app/coxdiag.py`
@@ -212,6 +227,9 @@ ties and `statsmodels.PHReg` counts rows entering exactly at an event time as at
 for these quantities.
 
 Validation:
+- `backend/tests/test_survival.py` checks the risk set and event definitions on hand-made timelines
+  (pause with return, short pause, censoring near the end, one-off contributors, delayed entry, lagged
+  covariates); run with `python -m pytest backend/tests` after `pip install -r requirements-dev.txt`;
 - the time-varying fitter matches a direct maximization of the Efron partial likelihood, and with a
   time-fixed covariate it reproduces `CoxPHFitter` exactly (coefficient and SE);
 - model-based SEs from `coxdiag` equal lifelines' to 6 decimals;

@@ -25,6 +25,7 @@ export default function ProjectPicker({
       >
         All projects <span className="tabular text-xs">{projects.length}</span>
       </button>
+      <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
       {projects.map((p) => (
         <label
           key={p.id}
@@ -40,6 +41,7 @@ export default function ProjectPicker({
           {p.status !== "done" && <span className="text-[11px] text-muted">{p.status}</span>}
         </label>
       ))}
+      </div>
     </div>
   );
 }

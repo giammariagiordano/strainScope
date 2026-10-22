@@ -131,6 +131,7 @@ export default function SurvivalPage() {
   const [penalizer, setPenalizer] = useState(0);
   const [group, setGroup] = useState("core");
   const [cluster, setCluster] = useState("person");
+  const [outcome, setOutcome] = useState("abandonment");
   const [phTransform, setPhTransform] = useState("rank");
   const [result, setResult] = useState<SurvivalResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +156,7 @@ export default function SurvivalPage() {
         setResult(
           await api.survival({
             project_ids: projectIds.length ? projectIds : null,
+            outcome,
             abandon_months: abandon,
             window,
             min_active_months: entryAfter,
@@ -176,7 +178,7 @@ export default function SurvivalPage() {
       }
     }, 400);
     return () => clearTimeout(t);
-  }, [options, projectIds, abandon, window, entryAfter, covariates, logCounts, standardize, stratify, penalizer, cluster, phTransform, group]);
+  }, [options, projectIds, abandon, window, entryAfter, covariates, logCounts, standardize, stratify, penalizer, cluster, phTransform, group, outcome]);
 
   const cox = result && !("error" in result.cox) ? result.cox : null;
   const coxError = result && "error" in result.cox ? result.cox.error : null;
@@ -196,8 +198,31 @@ export default function SurvivalPage() {
           <Section title="Projects">
             {projects && <ProjectPicker projects={projects} selected={projectIds} onChange={setProjectIds} />}
           </Section>
-          <Section title="Abandonment threshold" hint="Months of inactivity that define abandonment">
-            <NumberField label="Abandonment threshold" value={abandon} onChange={setAbandon} />
+          <Section title="Event">
+            <Segmented
+              label="Event"
+              value={outcome}
+              onChange={setOutcome}
+              options={[
+                { id: "abandonment", label: "Abandonment" },
+                { id: "break", label: "Any long pause" },
+              ]}
+            />
+            <p className="text-[11px] leading-snug text-muted">
+              {outcome === "abandonment"
+                ? "Stops and never comes back. Pauses followed by a return are not events, however long."
+                : `Every pause of ≥ ${abandon} months is an event, whether the developer returns or not (recurrent).`}
+            </p>
+          </Section>
+          <Section
+            title={outcome === "abandonment" ? "Silence needed to call it abandonment" : "Minimum pause length"}
+            hint={
+              outcome === "abandonment"
+                ? "Months without activity before the end of the data. Shorter final silences are censored: they may still return"
+                : "Months without activity that count as a long pause"
+            }
+          >
+            <NumberField label="Inactivity threshold in months" value={abandon} onChange={setAbandon} />
           </Section>
           <Section title="Covariate window" hint="Covariates summarize the previous N months (lagged)">
             <NumberField label="Covariate window" value={window} onChange={setWindow} />
@@ -271,8 +296,16 @@ export default function SurvivalPage() {
           {ds && (
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <StatTile label="Developers at risk" value={fmt.int(ds.at_risk_subjects)} hint={`of ${fmt.int(ds.subjects)} developers`} />
-              <StatTile label="Abandonments" value={fmt.int(ds.events)} hint={ds.at_risk_subjects ? `${fmt.pct(ds.events / ds.at_risk_subjects)} of developers at risk` : undefined} />
-              <StatTile label="Person-months" value={fmt.int(ds.intervals)} hint="intervals at risk" />
+              <StatTile
+                label={outcome === "abandonment" ? "Abandonments" : "Long pauses"}
+                value={fmt.int(ds.events)}
+                hint={
+                  outcome === "abandonment"
+                    ? `${ds.breaks_with_return} long pauses with return not counted`
+                    : `${ds.breaks_with_return} with return · ${ds.abandonments} without`
+                }
+              />
+              <StatTile label="Active months at risk" value={fmt.int(ds.intervals)} hint="pauses are not at risk" />
               <StatTile
                 label="Excluded"
                 value={fmt.int(ds.no_risk_time + ds.late_entry)}
@@ -377,7 +410,7 @@ export default function SurvivalPage() {
           {result && result.km.groups.length > 0 && (
             <Card>
               <CardHeader
-                title="Kaplan–Meier: share of developers still contributing"
+                title={outcome === "abandonment" ? "Kaplan–Meier: share of developers who have not abandoned" : "Kaplan–Meier: share of developers without a long pause yet"}
                 subtitle={
                   result.km.logrank_p != null ? `Log-rank test p = ${fmtP(result.km.logrank_p)}` : "Grouping measured at entry"
                 }
@@ -421,15 +454,15 @@ export default function SurvivalPage() {
               <Info size={16} className="mt-0.5 shrink-0 text-accent" />
               <div className="space-y-1.5">
                 <p>
-                  <span className="font-medium text-ink">Design.</span> One subject per developer × project, followed
-                  month by month from entry. Abandonment = last active month followed by at least {abandon} inactive
-                  months; events are only confirmed up to {abandon} months before each project's last observed month,
-                  then everyone still at risk is censored.
+                  <span className="font-medium text-ink">Design.</span> One subject per developer × project. Only active
+                  months are at risk: the question is "after this month, does the developer stop?". During a pause the
+                  developer is not at risk and re-enters when they come back.
                 </p>
                 <p>
-                  Covariates for month t summarize months t−{window}…t−1, so the activity that marks the exit month
-                  never predicts itself. Developers who leave in their entry month (one-off contributors) have no time at
-                  risk and are excluded.
+                  {outcome === "abandonment"
+                    ? `Abandonment = the developer never comes back. Because the future is unknown, a final silence counts only when it lasts at least ${abandon} months before the end of the data; more recent exits are censored.`
+                    : `Long pause = at least ${abandon} months without activity, with or without return. A developer can have several pauses (recurrent events), so standard errors should be clustered by person.`}{" "}
+                  Covariates for month t summarize months t−{window}…t−1.
                 </p>
               </div>
             </div>

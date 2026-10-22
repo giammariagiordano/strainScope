@@ -33,6 +33,7 @@ DEVELOPER_MONTH_VARS = [
     Variable("centrality", "Centrality", "Eigenvector centrality in the developer network (sliding window).", "score"),
     Variable("degree", "Degree", "Number of distinct collaborators in the developer network (sliding window)."),
     Variable("is_core", "Core", "1 if the developer is core in the month (cumulative-centrality threshold).", "binary"),
+    Variable("pause_start", "Long pause starts", "1 if this month is followed by at least the threshold of inactivity and the developer later returns.", "binary"),
     Variable("exit", "Exit month", "1 if this is the developer's last active month and they then stay inactive for at least the abandonment threshold before the end of observation.", "binary"),
 ]  # fmt: skip
 
@@ -53,6 +54,7 @@ DEVELOPER_VARS = [
     Variable("mean_centrality", "Mean centrality", "Mean monthly eigenvector centrality over active months.", "score"),
     Variable("max_centrality", "Max centrality", "Highest monthly eigenvector centrality.", "score"),
     Variable("inactive_months_at_end", "Inactive months at end", "Months between the developer's last activity and the project's last observed month."),
+    Variable("long_pauses", "Long pauses", "Pauses of at least the threshold after which the developer came back."),
     Variable("abandoned", "Abandoned", "1 if the developer has been inactive for at least the abandonment threshold at the end of observation. Right-censored: recent leavers count as 0.", "binary"),
 ]  # fmt: skip
 
@@ -103,6 +105,10 @@ def developer_month_frame(
     gap = pd.Series([_month_diff(a, b) for a, b in zip(last, project_end)], index=df.index)
     df["inactive_months_at_end"] = gap
     df["exit"] = ((df["month"] == last) & (gap >= abandon_months)).astype(int)
+    # Long pause with return: gap to the developer's next active month.
+    midx = df["month"].map(lambda m: _month_diff("0000-01", m))
+    nxt = midx.groupby([df["project_id"], df["developer_id"]]).shift(-1)
+    df["pause_start"] = ((nxt - midx - 1) >= abandon_months).astype(int)
     return df[
         ["project_id", "developer_id", "project", "developer", "month", "truck_factor_member",
          "off_hours_commits", "weekend_commits", "inactive_months_at_end", *(v.key for v in DEVELOPER_MONTH_VARS)]
@@ -141,6 +147,7 @@ def developer_frame(
         max_centrality=("centrality", "max"),
         inactive_months_at_end=("inactive_months_at_end", "first"),
         abandoned=("exit", "max"),
+        long_pauses=("pause_start", "sum"),
     ).reset_index()
     out["tenure_months"] = [_month_diff(a, b) + 1 for a, b in zip(out["first_month"], out["last_month"])]
     out["core_share"] = out["core_months"] / out["active_months"]

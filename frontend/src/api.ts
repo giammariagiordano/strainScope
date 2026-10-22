@@ -200,6 +200,7 @@ export interface SurvivalCovariate {
 
 export interface SurvivalQuery {
   project_ids: number[] | null;
+  outcome: string;
   abandon_months: number;
   window: number;
   min_active_months: number;
@@ -248,6 +249,9 @@ export interface SurvivalResult {
     late_entry: number;
     no_risk_time: number;
     events: number;
+    subjects_with_event: number;
+    breaks_with_return: number;
+    abandonments: number;
     at_risk_subjects: number;
     intervals: number;
   };
@@ -265,6 +269,7 @@ export interface SurvivalResult {
         intervals: number;
         subjects: number;
         stratified: boolean;
+        recurrent: boolean;
         warnings: string[];
       };
   km: { groups: KmGroup[]; logrank_p: number | null };
@@ -334,6 +339,7 @@ export const api = {
       groupings: { key: string; label: string }[];
       clusters: { key: string; label: string }[];
       ph_transforms: string[];
+      outcomes: { key: string; label: string }[];
       defaults: { abandon_months: number; window: number; min_active_months: number };
     }>("/survival/options"),
   survival: (q: SurvivalQuery) =>

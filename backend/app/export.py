@@ -92,10 +92,12 @@ def codebook() -> str:
         "",
         "## survival_intervals.csv — counting-process table for time-to-abandonment models",
         "",
-        "One row per developer-month at risk (start, stop] in months since entry; `event` = 1 in the month the",
-        "developer abandons. Entry = first active month; covariates summarize the previous 3 months (lagged).",
-        "Events are only confirmed up to the project's last observed month minus the abandonment threshold;",
-        "subjects still at risk then are censored. One-off contributors have no time at risk and are absent.",
+        "One row per ACTIVE developer-month at risk, (start, stop] in calendar months since entry; months of a",
+        "pause are not at risk. `event` = 1 in the developer's last active month if they never come back",
+        "(abandonment). For a model of long pauses instead, use `event_type != ''` as the event (recurrent:",
+        "`break_return` = pause of at least the threshold followed by a return). Entry = first active month (not at risk itself);",
+        "covariates summarize the previous 3 calendar months (lagged). Months later than the project's last",
+        "observed month minus the threshold are censored. One-off contributors have no time at risk.",
         "The subject is project + developer (pseudonyms are unique only within a project). Fit with e.g. lifelines",
         "`CoxTimeVaryingFitter` (id = project + developer, strata = project) or R",
         "`coxph(Surv(start, stop, event) ~ ... + strata(project) + cluster(paste(project, developer)))`.",
@@ -103,7 +105,9 @@ def codebook() -> str:
         "| Column | Description |",
         "|---|---|",
         "| `start`, `stop` | Interval bounds in months since entry. |",
-        "| `event` | 1 if the developer abandons at the end of this interval. |",
+        "| `episode` | Always 0 in this export (abandonment is a single event). |",
+        "| `event` | 1 if the developer stops here and never comes back (inactive ≥ threshold until the end of data). |",
+        "| `event_type` | `break_return`, `abandonment` (no return) or empty. |",
     ]
     lines += [f"| `{c.key}` | {c.description} |" for c in SURVIVAL_COVARIATES]
     lines += [
@@ -124,7 +128,7 @@ def build_zip(db: Session, project_ids: list[int] | None) -> bytes:
     projects = projects_frame(db, project_ids)
     devs = developer_frame(db, project_ids).drop(columns=["project_id", "developer_id"], errors="ignore")
     months = developer_month_frame(db, project_ids).drop(columns=["project_id", "developer_id"], errors="ignore")
-    intervals, _ = build_intervals(db, project_ids, settings.abandon_months, window=3, min_active_months=1)
+    intervals, _ = build_intervals(db, project_ids, settings.abandon_months, window=3, min_active_months=1, outcome="abandonment")
     # `person` holds the GitHub login used for clustering: never exported.
     intervals = intervals.drop(columns=["sid", "person"], errors="ignore")
     meta = {

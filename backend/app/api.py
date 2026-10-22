@@ -568,12 +568,14 @@ def survival_options():
         "groupings": [{"key": k, "label": v} for k, v in survival.GROUPINGS.items()],
         "clusters": [{"key": k, "label": v} for k, v in survival.CLUSTERS.items()],
         "ph_transforms": list(survival.PH_TRANSFORMS),
+        "outcomes": [{"key": k, "label": v} for k, v in survival.OUTCOMES.items()],
         "defaults": {"abandon_months": settings.abandon_months, "window": 3, "min_active_months": 1},
     }
 
 
 class SurvivalQuery(BaseModel):
     project_ids: list[int] | None = None
+    outcome: str = "abandonment"
     abandon_months: int = settings.abandon_months
     window: int = 3
     min_active_months: int = 1
@@ -592,6 +594,8 @@ def survival_analysis(q: SurvivalQuery):
     unknown = [c for c in q.covariates if c not in survival.COVARIATE_KEYS]
     if unknown:
         raise HTTPException(422, f"Unknown covariates: {unknown}")
+    if q.outcome not in survival.OUTCOMES:
+        raise HTTPException(422, f"outcome must be one of {list(survival.OUTCOMES)}")
     if q.cluster not in survival.CLUSTERS:
         raise HTTPException(422, f"cluster must be one of {list(survival.CLUSTERS)}")
     if q.ph_transform not in survival.PH_TRANSFORMS:
@@ -600,12 +604,13 @@ def survival_analysis(q: SurvivalQuery):
         raise HTTPException(422, f"group must be one of {list(survival.GROUPINGS)}")
     with session_scope() as s:
         intervals, stats = survival.build_intervals(
-            s, q.project_ids or None, max(1, q.abandon_months), max(1, q.window), max(1, q.min_active_months)
+            s, q.project_ids or None, max(1, q.abandon_months), max(1, q.window), max(1, q.min_active_months),
+            q.outcome,
         )
     out = {"dataset": {**stats, "at_risk_subjects": int(intervals["sid"].nunique()) if len(intervals) else 0,
                        "intervals": len(intervals)}}  # fmt: skip
     if intervals.empty or intervals["event"].sum() == 0:
-        out["cox"] = {"error": "No abandonment events in this selection."}
+        out["cox"] = {"error": "No events in this selection."}
         out["km"] = {"groups": [], "logrank_p": None}
         return out
     try:

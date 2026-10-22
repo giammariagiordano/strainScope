@@ -1,13 +1,24 @@
-"""Time-to-abandonment analysis: counting-process dataset, Cox model with time-varying covariates, Kaplan–Meier.
+"""Time-to-disengagement analysis: counting-process dataset, Cox model with time-varying covariates, Kaplan–Meier.
 
 Design
-- Subject: developer × project. Time unit: months. Time 0 = the month the subject enters the risk set.
-- Entry: the month of the developer's `min_active_months`-th active month (left truncation, so the
-  filter never uses information from the future).
-- Event: abandonment = last active month τ followed by ≥ K inactive months. Because a gap of K months must
-  be observable, events can only be confirmed up to `project_end - K`; everyone still at risk then is censored.
-- Covariates for month t summarize the previous W months [t-W, t-1] (lagged, so the activity that defines the
-  event month never enters its own covariates).
+- Subject: developer × project. Time unit: calendar months since entry.
+- Entry: the developer's `min_active_months`-th active month (left truncation, so the filter never uses
+  information from the future). The entry month itself is not at risk.
+- Risk set: only the developer's active months. "At risk" means: after this active month, will they stop?
+  During a pause they are not at risk (they cannot start a pause they are already in), and they re-enter
+  when they come back. Keeping inactive months at risk would teach the model that inactivity protects
+  from leaving, since those months can never be event months.
+- Break: an active month followed by ≥ K inactive months (returning later or not).
+- Outcomes:
+  * "abandonment" (default): only the final exit is an event — the developer never comes back. Pauses
+    followed by a return are never events, however long;
+  * "break": every pause of ≥ K months is an event, with or without return — recurrent events
+    (Andersen–Gill), so standard errors must be clustered by subject or person.
+- K is needed for abandonment only because the future is unknown: a final silence shorter than K months
+  before the end of the data may still end with a return, so it is censored, not counted.
+- A break can only be confirmed when K inactive months are observable, so active months later than
+  `project_end - K` are censored.
+- Covariates for month t summarize the previous W calendar months [t-W, t-1] (lagged).
 """
 
 from dataclasses import dataclass
@@ -43,6 +54,7 @@ COVARIATES = [
     Covariate("issues_prs_opened", "Issues + PRs opened", "Issues and PRs opened in the window.", count=True, default=False),
     Covariate("active_months", "Active months (window)", "Months with any activity in the window.", default=False),
     Covariate("cum_active_months", "Experience", "Cumulative active months before the interval.", count=True),
+    Covariate("gap_before", "Months since previous activity", "Inactive months between the previous active month and this one (0 if consecutive).", count=True, default=False),
     Covariate("truck_factor_member", "Truck-factor member", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
 ]  # fmt: skip
 COVARIATE_KEYS = [c.key for c in COVARIATES]
@@ -54,6 +66,10 @@ CLUSTERS = {
     "none": "None (model-based SEs)",
 }
 PH_TRANSFORMS = ("rank", "log", "identity")
+OUTCOMES = {
+    "abandonment": "Abandonment: stops and never comes back",
+    "break": "Any long pause (≥ K months, with or without return; recurrent)",
+}
 
 GROUPINGS = {
     "core": "Core at entry",
@@ -83,20 +99,96 @@ def _rolling(arr: np.ndarray, window: int, how: str) -> np.ndarray:
     return out
 
 
+def subject_rows(
+    months: np.ndarray,
+    values: dict[str, np.ndarray],
+    truck_factor_member: int,
+    project_end: int,
+    k: int,
+    window: int,
+    min_active_months: int,
+    outcome: str,
+) -> tuple[list[dict], str]:
+    """Risk-set rows for one subject. `months` are the sorted active month indices; `values` hold the
+    monthly activity aligned with them. Returns (rows, status) with status ok | no_risk_time | late_entry."""
+    if len(months) < min_active_months:
+        return [], "no_risk_time"
+    first, last = int(months[0]), int(months[-1])
+    entry = int(months[min_active_months - 1])
+    obs_end = project_end - k  # latest month whose following K months are observable
+    if entry >= obs_end:
+        return [], "late_entry"
+
+    # Dense calendar arrays from the first to the last active month, for the lagged windows.
+    n = last - first + 1
+    idx = months - first
+    dense = {}
+    for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened"):
+        a = np.zeros(n)
+        a[idx] = values[col]
+        dense[col] = a
+    active = np.zeros(n)
+    active[idx] = 1
+    w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened")}
+    w_active = _rolling(active, window, "sum")
+    w_core = _rolling(dense["is_core"], window, "max")
+    w_cent = _rolling(dense["centrality"], window, "max")
+    cum_active = np.concatenate([[0], np.cumsum(active)[:-1]])
+
+    rows, episode = [], 0
+    for j, t in enumerate(months):
+        t = int(t)
+        if t <= entry or t > obs_end:
+            continue
+        nxt = int(months[j + 1]) if j + 1 < len(months) else None
+        gap_after = (nxt - t - 1) if nxt is not None else (project_end - t)
+        is_break = gap_after >= k
+        returned = nxt is not None
+        event = is_break if outcome == "break" else (is_break and not returned)
+        i = t - first
+        c = w["commits"][i]
+        rows.append(
+            {
+                "episode": episode,
+                "start": t - entry - 1,
+                "stop": t - entry,
+                "event": int(event),
+                "event_type": ("break_return" if returned else "abandonment") if is_break else "",
+                "core": w_core[i],
+                "centrality": w_cent[i],
+                "off_hours_share": w["off_hours_commits"][i] / c if c else 0.0,
+                "commits": c,
+                "comments": w["comments"][i],
+                "reviews": w["reviews"][i],
+                "issues_prs_opened": w["opened"][i],
+                "active_months": w_active[i],
+                "cum_active_months": cum_active[i],
+                "gap_before": t - int(months[j - 1]) - 1 if j > 0 else 0,
+                "truck_factor_member": truck_factor_member,
+            }
+        )
+        if is_break and outcome == "break":
+            episode += 1
+    return rows, ("ok" if rows else "no_risk_time")
+
+
 def build_intervals(
     db: Session,
     project_ids: list[int] | None = None,
     abandon_months: int | None = None,
     window: int = 3,
     min_active_months: int = 1,
+    outcome: str = "abandonment",
 ) -> tuple[pd.DataFrame, dict]:
-    """Return the counting-process table (one row per subject-month at risk) and exclusion counts."""
+    """Return the counting-process table (one row per subject × active month at risk) and summary counts."""
     k = abandon_months or settings.abandon_months
     dm = developer_month_frame(db, project_ids, k)
-    stats = {"subjects": 0, "late_entry": 0, "no_risk_time": 0, "events": 0}
+    stats = {"subjects": 0, "late_entry": 0, "no_risk_time": 0, "events": 0, "subjects_with_event": 0,
+             "breaks_with_return": 0, "abandonments": 0}  # fmt: skip
+    columns = ["sid", "person", "project", "developer", "episode", "start", "stop", "event", "event_type", *COVARIATE_KEYS]
     if dm.empty:
-        return pd.DataFrame(columns=["sid", "person", "project", "developer", "start", "stop", "event", *COVARIATE_KEYS]), stats
-    dm = dm.assign(midx=dm["month"].map(_midx))
+        return pd.DataFrame(columns=columns), stats
+    dm = dm.assign(midx=dm["month"].map(_midx), opened=dm["issues_opened"] + dm["prs_opened"])
     logins = dict(
         db.execute(select(Developer.id, Developer.login).where(Developer.id.in_(dm["developer_id"].unique().tolist())))
         .tuples()
@@ -108,72 +200,25 @@ def build_intervals(
     for (pid, did), g in dm.groupby(["project_id", "developer_id"], sort=False):
         stats["subjects"] += 1
         g = g.sort_values("midx")
-        first, tau = int(g["midx"].iloc[0]), int(g["midx"].iloc[-1])
-        obs_end = int(project_end[pid]) - k  # last month in which an abandonment can be confirmed
-        if len(g) < min_active_months:
-            stats["no_risk_time"] += 1
+        values = {c: g[c].to_numpy(float) for c in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened")}
+        sub, status = subject_rows(
+            g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
+            k, window, min_active_months, outcome,
+        )  # fmt: skip
+        if status != "ok":
+            stats[status] += 1
             continue
-        entry = int(g["midx"].iloc[min_active_months - 1])
-        if entry >= obs_end:
-            stats["late_entry"] += 1
-            continue
-        event = tau <= obs_end
-        stop_m = tau if event else obs_end
-        if stop_m <= entry:
-            stats["no_risk_time"] += 1  # e.g. one-off contributors: they leave in their entry month
-            continue
-
-        # Dense monthly arrays from `first` to `stop_m`.
-        n = stop_m - first + 1
-        idx = g["midx"].to_numpy() - first
-        keep = idx < n
-        dense = {}
-        for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core"):
-            a = np.zeros(n)
-            a[idx[keep]] = g[col].to_numpy(float)[keep]
-            dense[col] = a
-        dense["opened"] = np.zeros(n)
-        dense["opened"][idx[keep]] = (g["issues_opened"] + g["prs_opened"]).to_numpy(float)[keep]
-        active = np.zeros(n)
-        active[idx[keep]] = 1
-
-        w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened")}
-        w_active = _rolling(active, window, "sum")
-        w_core = _rolling(dense["is_core"], window, "max")
-        w_cent = _rolling(dense["centrality"], window, "max")
-        cum_active = np.concatenate([[0], np.cumsum(active)[:-1]])
-        tf = int(g["truck_factor_member"].iloc[0])
-        project, developer = g["project"].iloc[0], g["developer"].iloc[0]
         login = logins.get(did)
         # Cluster key: the GitHub login links the same person across projects. Internal only: never exported.
         person = f"gh:{login.lower()}" if login else f"{pid}:{did}"
-
-        for t in range(entry + 1, stop_m + 1):
-            i = t - first
-            c = w["commits"][i]
-            rows.append(
-                {
-                    "sid": f"{pid}:{did}",
-                    "person": person,
-                    "project": project,
-                    "developer": developer,
-                    "start": t - entry - 1,
-                    "stop": t - entry,
-                    "event": int(event and t == stop_m),
-                    "core": w_core[i],
-                    "centrality": w_cent[i],
-                    "off_hours_share": w["off_hours_commits"][i] / c if c else 0.0,
-                    "commits": c,
-                    "comments": w["comments"][i],
-                    "reviews": w["reviews"][i],
-                    "issues_prs_opened": w["opened"][i],
-                    "active_months": w_active[i],
-                    "cum_active_months": cum_active[i],
-                    "truck_factor_member": tf,
-                }
-            )
-        stats["events"] += int(event)
-    return pd.DataFrame(rows), stats
+        ids = {"sid": f"{pid}:{did}", "person": person, "project": g["project"].iloc[0], "developer": g["developer"].iloc[0]}
+        rows.extend({**ids, **r} for r in sub)
+        events = sum(r["event"] for r in sub)
+        stats["events"] += events
+        stats["subjects_with_event"] += int(events > 0)
+        stats["breaks_with_return"] += sum(r["event_type"] == "break_return" for r in sub)
+        stats["abandonments"] += sum(r["event_type"] == "abandonment" for r in sub)
+    return pd.DataFrame(rows, columns=columns), stats
 
 
 def fit_cox(
@@ -189,7 +234,10 @@ def fit_cox(
     from lifelines import CoxTimeVaryingFitter
 
     warnings: list[str] = []
-    df = intervals[["sid", "person", "project", "start", "stop", "event", *covariates]].copy()
+    df = intervals[["sid", "person", "project", "episode", "start", "stop", "event", *covariates]].copy()
+    # One id per episode: with recurrent events lifelines expects one event per id. The partial
+    # likelihood does not depend on the id; dependence between episodes is handled by clustering.
+    df["eid"] = df["sid"] + ":" + df["episode"].astype(str)
     transforms = {}
     for c in covariates:
         cov = next(x for x in COVARIATES if x.key == c)
@@ -215,10 +263,10 @@ def fit_cox(
         )
     multi = df["project"].nunique() > 1
     strata = ["project"] if stratify and multi else None
-    cols = ["sid", "start", "stop", "event", *used] + (["project"] if strata else [])
+    cols = ["eid", "start", "stop", "event", *used] + (["project"] if strata else [])
 
     ctv = CoxTimeVaryingFitter(penalizer=penalizer)
-    ctv.fit(df[cols], id_col="sid", event_col="event", start_col="start", stop_col="stop", strata=strata)
+    ctv.fit(df[cols], id_col="eid", event_col="event", start_col="start", stop_col="stop", strata=strata)
     beta = ctv.params_[used].to_numpy(float)
 
     # Residuals, model-based and cluster-robust variance, PH test (Efron ties, see coxdiag).
@@ -255,6 +303,12 @@ def fit_cox(
                     f"{int((shared > 1).sum())} people contribute to several projects; their intervals are treated as one cluster."
                 )
 
+    recurrent = bool((df.groupby("sid")["event"].sum() > 1).any())
+    if recurrent and cluster in ("none", "project"):
+        warnings.append(
+            "Recurrent events (several breaks per developer): cluster by person or developer × project, "
+            "otherwise standard errors ignore the dependence between a developer's breaks."
+        )
     naive_se = np.sqrt(np.diag(naive))
     se = np.sqrt(np.diag(variance))
     ph = coxdiag.ph_test(parts.schoenfeld, parts.event_times, naive, ph_transform)
@@ -308,6 +362,7 @@ def fit_cox(
         "intervals": len(df),
         "subjects": int(df["sid"].nunique()),
         "stratified": bool(strata),
+        "recurrent": recurrent,
         "warnings": warnings,
     }
 
@@ -318,9 +373,13 @@ def kaplan_meier(intervals: pd.DataFrame, group: str) -> dict:
 
     if intervals.empty:
         return {"groups": [], "logrank_p": None}
-    first = intervals.sort_values("start").groupby("sid").first()
-    last = intervals.groupby("sid").agg(duration=("stop", "max"), event=("event", "max"))
-    subj = last.join(first[[group]])
+    # Time to the FIRST event: KM assumes one event per subject.
+    iv = intervals.sort_values(["sid", "stop"])
+    first = iv.groupby("sid").first()
+    first_event = iv[iv["event"] == 1].groupby("sid")["stop"].min()
+    last_stop = iv.groupby("sid")["stop"].max()
+    subj = pd.DataFrame({"duration": first_event.reindex(last_stop.index).fillna(last_stop), "event": last_stop.index.isin(first_event.index).astype(int)})
+    subj = subj.join(first[[group]])
     if group == "off_hours_share":
         median = subj[group].median()
         labels = subj[group].gt(median).map({True: f"Above median ({median:.0%})", False: f"At or below median ({median:.0%})"})
