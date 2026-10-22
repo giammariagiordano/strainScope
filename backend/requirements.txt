@@ -1,0 +1,10 @@
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+sqlalchemy==2.0.41
+psycopg[binary]==3.2.9
+httpx==0.28.1
+networkx==3.4.2
+python-dotenv==1.1.0
+pandas==2.2.3
+scipy==1.14.1
+lifelines==0.30.0

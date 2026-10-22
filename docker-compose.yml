@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: strainscope
+      POSTGRES_PASSWORD: strainscope
+      POSTGRES_DB: strainscope
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U strainscope"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build: .
+    environment: &env
+      DATABASE_URL: postgresql+psycopg://strainscope:strainscope@db/strainscope
+      GITHUB_TOKENS: ${GITHUB_TOKENS:-}
+      SHOW_REAL_IDENTITIES: ${SHOW_REAL_IDENTITIES:-false}
+    volumes:
+      - repos:/data
+    ports:
+      - "8080:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: ["python", "-m", "app.worker"]
+    environment: *env
+    volumes:
+      - repos:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    stop_grace_period: 60s
+
+volumes:
+  pgdata:
+  repos:
