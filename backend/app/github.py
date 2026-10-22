@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import httpx
 
 from .config import settings
+from .tokens import all_tokens
 
 log = logging.getLogger(__name__)
 
@@ -38,20 +39,46 @@ class TokenState:
 
 
 class GitHubClient:
+    REFRESH_S = 30
+
     def __init__(
         self,
-        tokens: tuple[str, ...] = settings.github_tokens,
+        tokens: tuple[str, ...] | None = None,
         on_wait: Callable[[int], None] | None = None,
     ):
-        """`on_wait(seconds_left)` is called while waiting for a reset; it may raise to abort the wait."""
-        self.tokens = [TokenState(t) for t in tokens] or [TokenState(None, remaining=60, limit=60)]
+        """`on_wait(seconds_left)` is called while waiting for a reset; it may raise to abort the wait.
+
+        Without explicit `tokens`, the pool is loaded from the environment and the database and
+        refreshed every REFRESH_S seconds, so tokens added from the UI are used without a restart.
+        """
+        self._fixed = tokens is not None
+        self.tokens: list[TokenState] = []
+        self._sync(list(tokens) if self._fixed else all_tokens())
         self.on_wait = on_wait
         self.http = httpx.Client(timeout=60, headers={"Accept": "application/vnd.github+json"})
         self._last_publish = 0.0
+        self._last_refresh = time.time()
 
     # -- token pool -----------------------------------------------------------------
 
+    def _sync(self, tokens: list[str]):
+        """Replace the pool, keeping the quota state of tokens that are still present."""
+        known = {t.token: t for t in self.tokens}
+        self.tokens = [known.get(tok) or TokenState(tok) for tok in tokens] or [
+            known.get(None) or TokenState(None, remaining=60, limit=60)
+        ]
+
+    def _refresh(self):
+        if self._fixed or time.time() - self._last_refresh < self.REFRESH_S:
+            return
+        self._last_refresh = time.time()
+        try:
+            self._sync(all_tokens())
+        except Exception:  # a DB hiccup must not break mining
+            log.exception("could not reload GitHub tokens")
+
     def _pick(self) -> TokenState:
+        self._refresh()
         now = time.time()
         for t in self.tokens:
             if t.reset and t.reset <= now:
@@ -70,6 +97,11 @@ class GitHubClient:
             if self.on_wait:
                 self.on_wait(left)
             time.sleep(min(left, 5))
+            # A token added from the UI ends the wait early.
+            before = {t.token for t in self.tokens}
+            self._refresh()
+            if any(t.token not in before for t in self.tokens):
+                break
         self._publish(force=True)
 
     def _publish(self, force: bool = False, waiting_until: int | None = None):

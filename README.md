@@ -146,6 +146,7 @@ with SQLite a second writer would block on the stage's open transaction.
 5. **Correlations**: correlation matrix across one, several or all projects (see below).
 6. **Survival**: Cox model on time-varying covariates and Kaplan–Meier curves for time to abandonment.
 7. **Export**: download a dataset for one repository, a selection, or everything.
+8. **Settings**: add, check and remove GitHub tokens.
 
 ## Analysis and export
 
@@ -250,7 +251,11 @@ npm install
 npm run dev                                   # http://localhost:5173
 ```
 
-If the GitHub CLI is logged in you can use `export GITHUB_TOKENS=$(gh auth token)`.
+**GitHub tokens**: add them from the UI (**Settings → Add a GitHub token**). Each token is checked with
+GitHub before being saved, and the worker picks up added or removed tokens within 30 seconds, without a
+restart. A fine-grained token with read-only access to public repositories is enough.
+Alternatively set `GITHUB_TOKENS` (environment or `backend/.env`); if the GitHub CLI is logged in you can use
+`export GITHUB_TOKENS=$(gh auth token)`. Environment and UI tokens are combined.
 
 Single-port mode: after `npm run build` in `frontend/`, the API also serves the UI at http://localhost:8000.
 
@@ -271,7 +276,7 @@ Environment variables (a `.env` file in `backend/` is also read):
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./data/strainscope.db` | Database (e.g. `postgresql+psycopg://user:pw@host/db`) |
 | `DATA_DIR` | `./data` | Repository clones |
-| `GITHUB_TOKENS` | — | GitHub tokens, comma-separated |
+| `GITHUB_TOKENS` | — | GitHub tokens, comma-separated (combined with tokens added in Settings) |
 | `BATCH_SIZE` | `200` | Items per checkpoint |
 | `WORK_HOURS` | `9-18` | Working-hours window for the off-hours metric |
 | `CORE_THRESHOLD` | `0.8` | Share of cumulative centrality defining core developers |
@@ -301,6 +306,10 @@ Environment variables (a `.env` file in `backend/` is also read):
 | `POST` | `/api/analysis/scatter` | Points for one pair (sampled above 3000) |
 | `GET` | `/api/survival/options` | Covariates, groupings, defaults |
 | `POST` | `/api/survival` | Risk-set summary, Cox model, Kaplan–Meier curves |
+| `GET` | `/api/settings/tokens` | Configured tokens (last 4 characters only) |
+| `POST` | `/api/settings/tokens` | `{ "token": "..." }`: validate with GitHub and save |
+| `POST` | `/api/settings/tokens/{id}/check` | Re-validate a saved token |
+| `DELETE` | `/api/settings/tokens/{id}` | Remove a saved token |
 | `GET` | `/api/status` | Worker status and GitHub quota |
 
 ## Ethics and privacy
@@ -309,7 +318,10 @@ Inferring wellbeing-related states about identifiable people is sensitive even o
 (GDPR, notably Art. 9, and Art. 89 for research).
 
 - **Pseudonyms by default**: salted hashes. Real names appear only with `SHOW_REAL_IDENTITIES=true`.
-- **Everything local**: no data leaves the machine.
+- **Everything local**: no data leaves the machine. The API has no authentication, so it only accepts
+  cross-origin requests from the dev UI (CORS), and Docker publishes it on 127.0.0.1 only.
+- **Tokens** added in Settings are stored in plain text in the local database (like a `.env` file) and are
+  never returned by the API: only their last four characters are shown.
 - **No sharing features** for individual profiles.
 - **Export** is pseudonymized only, with no raw text.
 - Before a study: a DPIA, and ethics-board approval if repository data is combined with surveys.

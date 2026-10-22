@@ -8,6 +8,7 @@ import ProjectPage from "./pages/ProjectPage";
 import AnalysisPage from "./pages/AnalysisPage";
 import ExportPage from "./pages/ExportPage";
 import SurvivalPage from "./pages/SurvivalPage";
+import SettingsPage from "./pages/SettingsPage";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -19,6 +20,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/survival" element={<SurvivalPage />} />
           <Route path="/export" element={<ExportPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

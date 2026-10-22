@@ -16,6 +16,7 @@ from .db import init_db, session_scope
 from .models import (
     AppState,
     Comment,
+    GitHubToken,
     Commit,
     Developer,
     DeveloperMonth,
@@ -29,12 +30,20 @@ from .models import (
 from . import analysis, survival
 from .dataset import LEVELS, VARIABLES, frame
 from .export import build_zip
+from . import tokens as token_store
 from .github import read_rate_state
 from .pipeline import STAGE_NAMES, ProjectRef, ensure_stage_runs, registry
 from .stages.aggregate import is_off_hours
 
 app = FastAPI(title="StrainScope API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# The UI reaches the API through the Vite proxy or from the same origin, so CORS only needs the dev origins.
+# A wildcard would let any website read the mined data from localhost and post settings to it.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 STAGES = {s.name: s for s in registry()}
 REPO_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:github\.com/)?([\w.-]+)/([\w.-]+?)(?:\.git)?/?$")
@@ -425,7 +434,7 @@ def status():
         return {
             "worker_alive": bool(alive or running),
             "github": read_rate_state(),
-            "tokens_configured": len(settings.github_tokens),
+            "tokens_configured": len(token_store.all_tokens()),
             "real_identities": settings.show_real_identities,
         }
 
@@ -612,6 +621,90 @@ def survival_analysis(q: SurvivalQuery):
         out["cox"] = {"error": f"Model did not converge: {e}. Try fewer covariates or a small penalizer (e.g. 0.1)."}
     out["km"] = survival.kaplan_meier(intervals, q.group)
     return out
+
+
+# -- settings: GitHub tokens -----------------------------------------------------------
+
+
+def _mask(token: str) -> str:
+    return token[-4:]
+
+
+def _token_out(t: GitHubToken) -> dict:
+    return {
+        "id": t.id,
+        "source": "ui",
+        "login": t.login,
+        "last4": t.last4,
+        "valid": t.valid,
+        "remaining": t.remaining,
+        "limit": t.limit,
+        "reset": t.reset,
+        "added_at": t.added_at.isoformat() + "Z",
+        "checked_at": t.checked_at.isoformat() + "Z" if t.checked_at else None,
+    }
+
+
+@app.get("/api/settings/tokens")
+def list_tokens():
+    """Never returns token values: only the last 4 characters."""
+    with session_scope() as s:
+        ui = [_token_out(t) for t in s.scalars(select(GitHubToken).order_by(GitHubToken.id))]
+    env = [{"id": None, "source": "env", "login": None, "last4": _mask(t), "valid": True} for t in settings.github_tokens]
+    return {"tokens": env + ui}
+
+
+class NewToken(BaseModel):
+    token: str
+
+
+@app.post("/api/settings/tokens")
+def add_token(body: NewToken):
+    token = body.token.strip()
+    if not token or any(c.isspace() for c in token) or len(token) > 400:
+        raise HTTPException(422, "Paste a single GitHub token")
+    if token in settings.github_tokens:
+        raise HTTPException(409, "This token is already configured through GITHUB_TOKENS")
+    with session_scope() as s:
+        if s.scalar(select(GitHubToken).where(GitHubToken.token == token)):
+            raise HTTPException(409, "This token is already saved")
+    try:
+        info = token_store.check(token)
+    except token_store.InvalidToken as e:
+        raise HTTPException(422, str(e))
+    with session_scope() as s:
+        t = GitHubToken(token=token, last4=_mask(token), valid=True, checked_at=utcnow(), **info)
+        s.add(t)
+        s.flush()
+        return _token_out(t)
+
+
+@app.post("/api/settings/tokens/{tid}/check")
+def recheck_token(tid: int):
+    with session_scope() as s:
+        t = s.get(GitHubToken, tid)
+        if t is None:
+            raise HTTPException(404, "Token not found")
+        try:
+            info = token_store.check(t.token)
+            t.valid = True
+            for k, v in info.items():
+                setattr(t, k, v)
+        except token_store.InvalidToken:
+            t.valid = False
+        t.checked_at = utcnow()
+        s.flush()
+        return _token_out(t)
+
+
+@app.delete("/api/settings/tokens/{tid}")
+def delete_token(tid: int):
+    with session_scope() as s:
+        t = s.get(GitHubToken, tid)
+        if t is None:
+            raise HTTPException(404, "Token not found")
+        s.delete(t)
+    return {"ok": True}
 
 
 # -- frontend (production build) -----------------------------------------------------

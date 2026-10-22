@@ -1,5 +1,5 @@
-import { Activity, Download, FolderGit2, HeartPulse, ShieldCheck, Sigma } from "lucide-react";
-import { NavLink, Outlet } from "react-router-dom";
+import { Activity, Download, FolderGit2, HeartPulse, Settings, ShieldCheck, Sigma } from "lucide-react";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { api, usePoll } from "../api";
 import { cx } from "./ui";
 
@@ -50,6 +50,11 @@ function SystemStatus() {
           </div>
         )}
       </div>
+      {data && data.tokens_configured === 0 && (
+        <Link to="/settings" className="block rounded-lg bg-accent-soft px-2.5 py-2 font-medium text-accent hover:underline">
+          Add a GitHub token →
+        </Link>
+      )}
       {data && !data.worker_alive && (
         <p className="leading-snug text-muted">
           Start it with <code className="rounded bg-raised px-1 py-0.5 text-ink2">python -m app.worker</code>
@@ -71,6 +76,7 @@ export default function Layout() {
               { to: "/analysis", label: "Correlations", icon: Sigma },
               { to: "/survival", label: "Survival", icon: HeartPulse },
               { to: "/export", label: "Export", icon: Download },
+              { to: "/settings", label: "Settings", icon: Settings },
             ].map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}

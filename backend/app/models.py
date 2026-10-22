@@ -218,3 +218,20 @@ class AppState(Base):
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class GitHubToken(Base):
+    """Token added from the UI. Stored in plain text in the local database; never returned by the API."""
+
+    __tablename__ = "github_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    token: Mapped[str] = mapped_column(Text, unique=True)
+    login: Mapped[str | None] = mapped_column(String(200))
+    last4: Mapped[str] = mapped_column(String(4))
+    valid: Mapped[bool] = mapped_column(Boolean, default=True)
+    remaining: Mapped[int | None] = mapped_column(Integer)
+    limit: Mapped[int | None] = mapped_column(Integer)
+    reset: Mapped[int | None] = mapped_column(Integer)
+    added_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    checked_at: Mapped[datetime | None] = mapped_column(DateTime)

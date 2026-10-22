@@ -270,6 +270,19 @@ export interface SurvivalResult {
   km: { groups: KmGroup[]; logrank_p: number | null };
 }
 
+export interface TokenInfo {
+  id: number | null;
+  source: "env" | "ui";
+  login: string | null;
+  last4: string;
+  valid: boolean;
+  remaining?: number | null;
+  limit?: number | null;
+  reset?: number | null;
+  added_at?: string;
+  checked_at?: string | null;
+}
+
 export function exportUrl(projectIds?: number[]) {
   return projectIds?.length ? `/api/export?project_ids=${projectIds.join(",")}` : "/api/export";
 }
@@ -306,6 +319,11 @@ export const api = {
     request<{ last_month: string | null; developers: DeveloperRow[] }>(`/projects/${id}/developers`),
   developer: (id: number, devId: number) => request<DeveloperTimeline>(`/projects/${id}/developers/${devId}`),
   status: () => request<Status>("/status"),
+  tokens: () => request<{ tokens: TokenInfo[] }>("/settings/tokens"),
+  addToken: (token: string) =>
+    request<TokenInfo>("/settings/tokens", { method: "POST", body: JSON.stringify({ token }) }),
+  checkToken: (id: number) => request<TokenInfo>(`/settings/tokens/${id}/check`, { method: "POST" }),
+  removeToken: (id: number) => request(`/settings/tokens/${id}`, { method: "DELETE" }),
   variables: () =>
     request<{ defaults: { abandon_months: number }; levels: Record<Level, VariableDef[]> }>("/analysis/variables"),
   correlations: (q: AnalysisQuery & { method: Method; variables: string[]; controls: string[] }) =>
