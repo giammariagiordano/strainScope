@@ -111,6 +111,10 @@ Stages 7–10 only compute on stored data: they are fast and can be re-run on th
   cursor, and marks the project `paused`.
 - **Resume**: the project goes back to `queued`; the worker restarts from the first unfinished stage, at its cursor.
 - **Rerun a stage**: the chosen stage and every later stage go back to `pending`.
+- **Delete**: queued, paused, failed and finished projects are deleted at once (rows and clone). A project
+  that is being mined becomes `deleting`: the worker stops at its next checkpoint and deletes it itself, so
+  the API never removes data or clones under a running stage. If the worker is not alive, the project is
+  deleted at once; pending deletions are also completed when a worker starts.
 - **Crash or stopped worker**: the worker writes a heartbeat. At startup, `running` projects with a
   stale heartbeat go back to `queued` and resume from their last checkpoint.
 - **GitHub rate limit**: when a token runs out the next one is used; if all are exhausted the worker
@@ -139,7 +143,8 @@ with SQLite a second writer would block on the stage's open transaction.
 
 ## User interface
 
-1. **Projects**: paste one or more URLs (one per line) and see the status of every repository.
+1. **Projects**: paste one or more URLs (one per line) and see the status of every repository. Each card
+   can be paused, resumed or deleted; **Delete all** removes every project after typing `delete` to confirm.
 2. **Pipeline monitor**: per-stage progress, pause / resume / rerun, live logs, GitHub quota.
 3. **Overview**: monthly activity, core developers over time, truck factor, commit-hour heatmap.
 4. **Developers**: pseudonymized table with role, activity, off-hours share, and monthly timeline.
@@ -313,7 +318,8 @@ Environment variables (a `.env` file in `backend/` is also read):
 | `POST` | `/api/projects/{id}/pause` | Request a pause |
 | `POST` | `/api/projects/{id}/resume` | Resume |
 | `POST` | `/api/projects/{id}/rerun/{stage}` | Re-run from a stage |
-| `DELETE` | `/api/projects/{id}` | Delete project and its data |
+| `DELETE` | `/api/projects/{id}` | Delete a project and its data (deferred while it is being mined) |
+| `DELETE` | `/api/projects` | Delete all projects |
 | `GET` | `/api/projects/{id}/logs` | Recent logs |
 | `GET` | `/api/projects/{id}/overview` | Project-level metrics |
 | `GET` | `/api/projects/{id}/developers` | Per-developer metrics |

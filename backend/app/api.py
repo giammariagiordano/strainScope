@@ -28,6 +28,7 @@ from .models import (
     utcnow,
 )
 from . import analysis, survival
+from . import projects as project_ops
 from .dataset import LEVELS, VARIABLES, frame
 from .export import build_zip
 from . import tokens as token_store
@@ -169,6 +170,8 @@ def project_detail(pid: int):
 def pause(pid: int):
     with session_scope() as s:
         p = get_project(s, pid)
+        if p.status == "deleting":
+            raise HTTPException(409, "The project is being deleted")
         if p.status == "running":
             p.pause_requested = True
         elif p.status == "queued":
@@ -181,9 +184,13 @@ def pause(pid: int):
 def resume(pid: int):
     with session_scope() as s:
         p = get_project(s, pid)
+        if p.status == "deleting":
+            raise HTTPException(409, "The project is being deleted")
         if p.status == "running":
             p.pause_requested = False
             return {"ok": True}
+        if p.status not in ("paused", "failed"):
+            return {"ok": True}  # queued or done: nothing to resume
         s.execute(
             update(StageRun)
             .where(StageRun.project_id == pid, StageRun.status.in_(["failed", "paused", "running"]))
@@ -200,7 +207,7 @@ def rerun(pid: int, stage: str):
         raise HTTPException(404, "Unknown stage")
     with session_scope() as s:
         p = get_project(s, pid)
-        if p.status == "running":
+        if p.status in ("running", "deleting"):
             raise HTTPException(409, "Pause the project before re-running a stage")
         later = STAGE_NAMES[STAGE_NAMES.index(stage) :]
         s.execute(
@@ -215,14 +222,18 @@ def rerun(pid: int, stage: str):
 
 @app.delete("/api/projects/{pid}")
 def delete_project(pid: int):
-    with session_scope() as s:
-        p = get_project(s, pid)
-        if p.status == "running":
-            raise HTTPException(409, "Pause the project before deleting it")
-        ref = ProjectRef(p.id, p.owner, p.name)
-        s.execute(delete(Project).where(Project.id == pid))
-    shutil.rmtree(ref.repo_path, ignore_errors=True)
-    return {"ok": True}
+    """Running projects are deleted by the worker at its next checkpoint (status `deleting`)."""
+    result = project_ops.request_delete(pid)
+    if result == "missing":
+        raise HTTPException(404, "Project not found")
+    return {"result": result}
+
+
+@app.delete("/api/projects")
+def delete_all_projects():
+    """Delete every project: queued, paused, failed, done and running."""
+    results = [project_ops.request_delete(pid) for pid in project_ops.all_project_ids()]
+    return {"deleted": results.count("deleted"), "deleting": results.count("deleting")}
 
 
 @app.get("/api/projects/{pid}/logs")

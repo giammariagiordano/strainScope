@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export type ProjectStatus = "queued" | "running" | "paused" | "done" | "failed";
+export type ProjectStatus = "queued" | "running" | "paused" | "done" | "failed" | "deleting";
 export type StageStatus = "pending" | "running" | "paused" | "done" | "failed";
 
 export interface ProjectSummary {
@@ -317,7 +317,8 @@ export const api = {
   pause: (id: number) => request(`/projects/${id}/pause`, { method: "POST" }),
   resume: (id: number) => request(`/projects/${id}/resume`, { method: "POST" }),
   rerun: (id: number, stage: string) => request(`/projects/${id}/rerun/${stage}`, { method: "POST" }),
-  remove: (id: number) => request(`/projects/${id}`, { method: "DELETE" }),
+  remove: (id: number) => request<{ result: "deleted" | "deleting" }>(`/projects/${id}`, { method: "DELETE" }),
+  removeAll: () => request<{ deleted: number; deleting: number }>("/projects", { method: "DELETE" }),
   logs: (id: number) => request<LogEntry[]>(`/projects/${id}/logs`),
   overview: (id: number) => request<Overview>(`/projects/${id}/overview`),
   developers: (id: number) =>

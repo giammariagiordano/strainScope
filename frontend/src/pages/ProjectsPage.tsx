@@ -1,5 +1,5 @@
-import { FolderGit2, GitCommitHorizontal, MessageSquare, Plus, Users } from "lucide-react";
-import { useState } from "react";
+import { FolderGit2, GitCommitHorizontal, MessageSquare, Pause, Play, Plus, Trash2, Users } from "lucide-react";
+import { useState, type MouseEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, usePoll, type ProjectSummary } from "../api";
 import { Button, Card, Empty, ProgressBar, StatusBadge, fmt } from "../components/ui";
@@ -55,11 +55,31 @@ function AddProjects({ onAdded }: { onAdded: () => void }) {
   );
 }
 
-function ProjectCard({ p }: { p: ProjectSummary }) {
+function ProjectCard({ p, onChange }: { p: ProjectSummary; onChange: () => void }) {
   const active = p.status === "running";
+  const [busy, setBusy] = useState(false);
+  const canPause = (p.status === "running" && !p.pause_requested) || p.status === "queued";
+  const canResume = p.status === "paused" || p.status === "failed";
+
+  // The card is a link: actions must not navigate.
+  const act = (fn: () => Promise<unknown>, confirmText?: string) => async (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (confirmText && !confirm(confirmText)) return;
+    setBusy(true);
+    try {
+      await fn();
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setBusy(false);
+      onChange();
+    }
+  };
+
   return (
     <Link to={`/projects/${p.id}`} className="group block">
-      <Card className="h-full p-5 transition group-hover:border-accent/40 group-hover:shadow-lg">
+      <Card className="flex h-full flex-col p-5 transition group-hover:border-accent/40 group-hover:shadow-lg">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="truncate text-xs text-muted">{p.full_name.split("/")[0]}</div>
@@ -75,7 +95,9 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
                 ? `Completed ${p.finished_at ? fmt.ago(p.finished_at) : ""}`
                 : p.status === "failed"
                   ? p.error
-                  : (p.current_stage_label ?? "Waiting for worker")}
+                  : p.status === "deleting"
+                    ? "Stopping at the next checkpoint, then deleting"
+                    : (p.current_stage_label ?? "Waiting for worker")}
             </span>
             <span className="tabular shrink-0 pl-2 text-muted">
               {p.stages_done}/{p.stages_total}
@@ -85,32 +107,133 @@ function ProjectCard({ p }: { p: ProjectSummary }) {
           {active && p.current_message && <div className="mt-1.5 truncate text-xs text-muted">{p.current_message}</div>}
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-2 border-t border-line pt-4 text-xs text-ink2">
+        <div className="mt-auto flex items-center gap-2 border-t border-line pt-4 text-xs text-ink2">
           <span className="flex items-center gap-1.5" title="Commits">
             <GitCommitHorizontal size={14} className="text-muted" /> <span className="tabular">{fmt.int(p.counts.commits)}</span>
           </span>
-          <span className="flex items-center gap-1.5" title="Issues and PRs">
+          <span className="ml-2 flex items-center gap-1.5" title="Issues and PRs">
             <MessageSquare size={14} className="text-muted" /> <span className="tabular">{fmt.int(p.counts.issues)}</span>
           </span>
-          <span className="flex items-center gap-1.5" title="Developers (excluding bots)">
+          <span className="ml-2 flex items-center gap-1.5" title="Developers (excluding bots)">
             <Users size={14} className="text-muted" /> <span className="tabular">{fmt.int(p.counts.developers)}</span>
           </span>
+          {p.status !== "deleting" && (
+            <span className="ml-auto flex gap-0.5">
+              {canPause && (
+                <Button variant="ghost" className="px-2 py-1" title="Pause" aria-label={`Pause ${p.full_name}`} disabled={busy} onClick={act(() => api.pause(p.id))}>
+                  <Pause size={14} />
+                </Button>
+              )}
+              {canResume && (
+                <Button variant="ghost" className="px-2 py-1" title="Resume" aria-label={`Resume ${p.full_name}`} disabled={busy} onClick={act(() => api.resume(p.id))}>
+                  <Play size={14} />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                className="px-2 py-1 hover:text-bad"
+                title="Delete"
+                aria-label={`Delete ${p.full_name}`}
+                disabled={busy}
+                onClick={act(() => api.remove(p.id), `Delete ${p.full_name} and all its mined data? This cannot be undone.`)}
+              >
+                <Trash2 size={14} />
+              </Button>
+            </span>
+          )}
         </div>
       </Card>
     </Link>
   );
 }
 
+function DeleteAllDialog({ count, onClose, onDone }: { count: number; onClose: () => void; onDone: (msg: string) => void }) {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function run() {
+    setBusy(true);
+    try {
+      const r = await api.removeAll();
+      onDone(
+        `Deleted ${r.deleted} project${r.deleted === 1 ? "" : "s"}` +
+          (r.deleting ? `; ${r.deleting} running will be deleted at the next checkpoint` : ""),
+      );
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center p-4" role="dialog" aria-modal="true" aria-labelledby="delete-all-title">
+      <button className="absolute inset-0 bg-black/40" onClick={onClose} aria-label="Cancel" />
+      <Card className="relative w-full max-w-md p-6">
+        <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-raised text-bad">
+          <Trash2 size={18} />
+        </div>
+        <h2 id="delete-all-title" className="text-base font-semibold text-ink">
+          Delete all {count} projects?
+        </h2>
+        <p className="mt-1 text-sm text-ink2">
+          This removes every project — queued, running, paused and completed — with all mined data and repository
+          clones. Running projects stop at their next checkpoint. This cannot be undone.
+        </p>
+        <label htmlFor="confirm-delete" className="mt-4 block text-xs text-muted">
+          Type <span className="font-mono font-medium text-ink">delete</span> to confirm
+        </label>
+        <input
+          id="confirm-delete"
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && onClose()}
+          className="mt-1 w-full rounded-lg border border-line bg-page px-3 py-2 text-sm text-ink focus:border-accent focus:outline-none"
+        />
+        {error && <p className="mt-2 text-sm text-bad">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={run} disabled={text.trim().toLowerCase() !== "delete" || busy}>
+            <Trash2 size={15} /> {busy ? "Deleting…" : "Delete all"}
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function ProjectsPage() {
   const { data, error, refresh } = usePoll(api.projects, 2000);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Projects</h1>
-        <p className="mt-1 text-sm text-ink2">
-          Mine repositories and explore developer roles, workload and activity over time.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-ink">Projects</h1>
+          <p className="mt-1 text-sm text-ink2">
+            Mine repositories and explore developer roles, workload and activity over time.
+          </p>
+        </div>
+        {!!data?.length && (
+          <Button variant="danger" onClick={() => setConfirmAll(true)}>
+            <Trash2 size={15} /> Delete all
+          </Button>
+        )}
       </header>
+      {notice && <p className="rounded-xl border border-line bg-surface px-4 py-3 text-sm text-ink2">{notice}</p>}
+      {confirmAll && data && (
+        <DeleteAllDialog
+          count={data.length}
+          onClose={() => setConfirmAll(false)}
+          onDone={(msg) => {
+            setConfirmAll(false);
+            setNotice(msg);
+            refresh();
+          }}
+        />
+      )}
 
       <AddProjects onAdded={refresh} />
 
@@ -127,7 +250,7 @@ export default function ProjectsPage() {
       {data && data.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {data.map((p) => (
-            <ProjectCard key={p.id} p={p} />
+            <ProjectCard key={p.id} p={p} onChange={refresh} />
           ))}
         </div>
       )}

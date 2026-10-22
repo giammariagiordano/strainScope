@@ -86,8 +86,8 @@ export default function ProjectPage() {
             </a>
             <Button
               variant="danger"
-              disabled={busy || p.status === "running"}
-              title={p.status === "running" ? "Pause the project first" : "Delete project and all mined data"}
+              disabled={busy || p.status === "deleting"}
+              title="Delete project and all mined data"
               onClick={() => {
                 if (confirm(`Delete ${p.full_name} and all its mined data? This cannot be undone.`))
                   act(async () => {

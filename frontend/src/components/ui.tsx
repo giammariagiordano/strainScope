@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Circle, Clock, Loader2, PauseCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Circle, Clock, Loader2, PauseCircle, Trash2 } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import type { ProjectStatus, StageStatus } from "../api";
 
@@ -13,6 +13,7 @@ const STATUS: Record<ProjectStatus | StageStatus, { label: string; icon: typeof 
   paused: { label: "Paused", icon: PauseCircle, cls: "text-warn bg-raised" },
   done: { label: "Done", icon: CheckCircle2, cls: "text-good bg-raised" },
   failed: { label: "Failed", icon: AlertTriangle, cls: "text-bad bg-raised" },
+  deleting: { label: "Deleting…", icon: Trash2, cls: "text-bad bg-raised" },
 };
 
 export function StatusBadge({ status, pausing }: { status: ProjectStatus | StageStatus; pausing?: boolean }) {

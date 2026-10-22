@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 from .config import settings
 from .db import SessionLocal, init_db, session_scope
 from .models import AppState, Log, Project, StageRun, utcnow
+from .projects import purge
 from .pipeline import STOP, Interrupted, Paused, ProjectRef, StageContext, ensure_stage_runs, registry
 
 log = logging.getLogger("worker")
@@ -28,8 +29,13 @@ def _handle_signal(*_):
 
 
 def recover_orphans():
-    """Projects left `running` by a dead worker go back to the queue."""
+    """Projects left `running` by a dead worker go back to the queue; pending deletions are completed."""
     cutoff = utcnow() - timedelta(seconds=settings.heartbeat_timeout_s)
+    with session_scope() as s:
+        pending = list(s.scalars(select(Project.id).where(Project.status == "deleting")))
+    for pid in pending:
+        purge(pid)
+        log.info("completed pending deletion of project %s", pid)
     with session_scope() as s:
         stale = list(
             s.scalars(
@@ -136,6 +142,15 @@ def _mark_stage(pid: int, stage: str, status: str, message: str | None = None):
 
 
 def _set_project(pid: int, status: str, error: str | None = None, log_message: str | None = None, level="info"):
+    with session_scope() as s:
+        p = s.get(Project, pid)
+        if p is None:
+            return
+        deleting = p.status == "deleting"
+    if deleting:  # the user deleted it while it was being mined
+        purge(pid)
+        log.info("deleted project %s on request", pid)
+        return
     with session_scope() as s:
         p = s.get(Project, pid)
         if p is None:
