@@ -36,6 +36,9 @@ class TokenState:
     remaining: int = 5000
     limit: int = 5000
     reset: int = 0  # epoch seconds
+    # GraphQL has its own point-based quota
+    gql_remaining: int = 5000
+    gql_reset: int = 0
 
 
 class GitHubClient:
@@ -159,6 +162,57 @@ class GitHubClient:
                 raise GitHubError(f"GET {url} -> {r.status_code}: {r.text[:300]}")
             return r
         raise GitHubError(f"GET {url} failed after retries")
+
+    def graphql(self, query: str, variables: dict) -> dict:
+        """Run a GraphQL query and return `data`. Requires a token; retries server errors and GraphQL errors."""
+        for attempt in range(6):
+            self._refresh()
+            now = time.time()
+            for t in self.tokens:
+                if t.gql_reset and t.gql_reset <= now:
+                    t.gql_remaining = 5000
+            pool = [t for t in self.tokens if t.token]
+            if not pool:
+                raise GitHubError("GraphQL needs a GitHub token")
+            usable = [t for t in pool if t.gql_remaining > 50]
+            if not usable:
+                self._wait_until(min(t.gql_reset for t in pool))
+                continue
+            tok = max(usable, key=lambda t: t.gql_remaining)
+            try:
+                r = self.http.post(
+                    f"{API}/graphql",
+                    json={"query": query, "variables": variables},
+                    headers={"Authorization": f"Bearer {tok.token}"},
+                )
+            except httpx.TransportError as e:
+                log.warning("network error %s (attempt %s)", e, attempt)
+                time.sleep(2**attempt)
+                continue
+            if "x-ratelimit-remaining" in r.headers:
+                tok.gql_remaining = int(r.headers["x-ratelimit-remaining"])
+                tok.gql_reset = int(r.headers.get("x-ratelimit-reset", tok.gql_reset))
+            if r.status_code in (403, 429):
+                if "retry-after" in r.headers:  # secondary rate limit
+                    self._wait_until(int(time.time()) + int(r.headers["retry-after"]))
+                else:
+                    tok.gql_remaining = 0
+                continue
+            if r.status_code >= 500:  # GraphQL timeouts surface as 502
+                time.sleep(2**attempt)
+                continue
+            if r.status_code >= 400:
+                raise GitHubError(f"POST /graphql -> {r.status_code}: {r.text[:300]}")
+            body = r.json()
+            if body.get("errors"):
+                if any(e.get("type") == "RATE_LIMITED" for e in body["errors"]):
+                    tok.gql_remaining = 0
+                    continue
+                log.warning("GraphQL errors (attempt %s): %s", attempt, str(body["errors"])[:300])
+                time.sleep(2**attempt)
+                continue
+            return body["data"]
+        raise GitHubError("GraphQL query failed after retries")
 
     def get_optional(self, path: str, params: dict | None = None) -> dict | None:
         """GET a single resource; None if GitHub says it does not exist (404) or was deleted (410)."""

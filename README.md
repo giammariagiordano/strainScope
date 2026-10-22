@@ -96,7 +96,7 @@ re-running it never duplicates data.
 | 3 | `commit_authors` | GitHub API: maps commit emails to GitHub logins | page |
 | 4 | `issues` | Issues and PRs (`/issues?state=all&sort=updated`) | last `updated_at` |
 | 5 | `comments` | Issue/PR comments and code-review comments | last `updated_at` per endpoint |
-| 6 | `reviews` | PR reviews (approvals, change requests) | last PR number |
+| 6 | `reviews` | PR reviews (approvals, change requests) via GraphQL, 100 PRs per request | GraphQL cursor |
 | 7 | `bots` | Flags bot accounts (GitHub `Bot` type, `[bot]` suffix, known list) | — |
 | 8 | `identities` | Merges aliases (email, name, login, GitHub noreply email) into developers | — |
 | 9 | `aggregate` | Developer × month activity table (commits, lines, off-hours, issues, PRs, comments, reviews) | — |
@@ -118,7 +118,20 @@ official `gh` CLI), which would silently drop data. The miner therefore:
 - **issue comments**: GitHub reports each issue's comment count; threads with fewer saved comments are
   re-fetched one by one.
 
-Review comments and PR reviews have no cheap count to check against and rely on the retries only.
+Review comments have no cheap count to check against and rely on the retries only.
+
+**PR reviews via GraphQL.** Reviews are the most expensive data over REST (one request per PR). The
+`reviews` stage fetches them with GraphQL, 100 pull requests per request, and falls back to REST for PRs
+with more than 100 reviews, for PRs present in the issues listing but missing from GraphQL, and when no
+token is configured (GraphQL requires one). GraphQL has its own quota, tracked separately.
+Bot logins are mapped to the REST form (`name[bot]`). `backend/scripts/compare_reviews_rest_graphql.py`
+compares both APIs field by field; results:
+
+| Repository | PRs | Reviews | REST | GraphQL | Identical |
+|---|---|---|---|---|---|
+| pallets/itsdangerous | 312 | 47 | 312 requests, 148 s | 4 requests, 7 s | yes |
+| pallets/markupsafe | 384 | 39 | 384 requests, 184 s | 4 requests, 7 s | yes |
+| 10up/classifai | 766 | 1,392 | 766 requests, 434 s | 8 requests, 20 s | yes |
 Recovered items are reported in the stage message and in the activity log.
 
 ## Pause and resume

@@ -186,12 +186,94 @@ class CommentsStage(Stage):
             ctx.log(f"Recovered {recovered} comments that the listing did not return", "warn")
 
 
+REVIEWS_QUERY = """
+query($owner: String!, $name: String!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(first: 100, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC}) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number
+        reviews(first: 100) {
+          totalCount
+          pageInfo { hasNextPage }
+          nodes { databaseId state submittedAt body author { login __typename } }
+        }
+      }
+    }
+  }
+}
+"""
+
+
+def graphql_user(author: dict | None) -> dict | None:
+    """Map a GraphQL actor to the REST user shape: REST bot logins carry a `[bot]` suffix, GraphQL ones do not."""
+    if not author or not author.get("login"):
+        return None
+    if author.get("__typename") == "Bot":
+        return {"login": f"{author['login']}[bot]", "type": "Bot"}
+    return {"login": author["login"], "type": author.get("__typename", "User")}
+
+
 class ReviewsStage(Stage):
     name = "reviews"
     label = "Reviews"
-    description = "Pull-request reviews (approvals, change requests, review bodies), one PR at a time."
+    description = "Pull-request reviews (approvals, change requests, review bodies), 100 PRs per GraphQL request."
 
     def run(self, ctx: StageContext):
+        if not any(t.token for t in ctx.github.tokens):
+            ctx.log("No GitHub token: GraphQL is unavailable, fetching reviews one PR at a time", "warn")
+            return self.run_rest(ctx)
+        pid = ctx.project.id
+        owner, name = ctx.project.owner, ctx.project.name
+        seen: set[int] = set(ctx.cursor.get("seen", []))
+        rest_fallback = ctx.cursor.get("rest_fallback", 0)
+        while True:
+            data = ctx.github.graphql(REVIEWS_QUERY, {"owner": owner, "name": name, "cursor": ctx.cursor.get("gql_cursor")})
+            repo = data.get("repository")
+            if repo is None:
+                raise RuntimeError("GraphQL: repository not found")
+            prs = repo["pullRequests"]
+            for pr in prs["nodes"]:
+                number = pr["number"]
+                if pr["reviews"]["pageInfo"]["hasNextPage"]:
+                    self.fetch_rest(ctx, number)  # > 100 reviews: rare, use REST for this PR
+                    rest_fallback += 1
+                else:
+                    for rv in pr["reviews"]["nodes"]:
+                        if not rv.get("submittedAt") or rv.get("databaseId") is None:
+                            continue  # pending review
+                        upsert_review(ctx, number, rv["databaseId"], graphql_user(rv.get("author")),
+                                      rv.get("body"), rv.get("state"), rv["submittedAt"])  # fmt: skip
+                seen.add(number)
+            ctx.cursor.update(gql_cursor=prs["pageInfo"]["endCursor"] or ctx.cursor.get("gql_cursor"),
+                              seen=sorted(seen), rest_fallback=rest_fallback)  # fmt: skip
+            ctx.progress(len(seen), prs["totalCount"], f"{len(seen)}/{prs['totalCount']} pull requests (GraphQL)")
+            ctx.checkpoint()
+            if not prs["pageInfo"]["hasNextPage"]:
+                break
+
+        # PRs known from the issues listing but not returned by GraphQL: fetch them over REST.
+        known = set(ctx.db.scalars(select(Issue.number).where(Issue.project_id == pid, Issue.is_pr)))
+        missing = sorted(known - seen)
+        for n in missing:
+            self.fetch_rest(ctx, n)
+            ctx.checkpoint()
+        total = len(seen | known)
+        ctx.progress(total, total, f"{total} pull requests (GraphQL; {rest_fallback + len(missing)} via REST)")
+        if missing:
+            ctx.log(f"{len(missing)} pull requests missing from GraphQL were fetched over REST", "warn")
+
+    @staticmethod
+    def fetch_rest(ctx: StageContext, number: int):
+        path = f"/repos/{ctx.project.full_name}/pulls/{number}/reviews"
+        for _, items in ctx.github.paginate(path, retry_empty=False):
+            for it in items:
+                if it.get("submitted_at"):  # skip pending reviews
+                    upsert_review(ctx, number, it["id"], it.get("user"), it.get("body"), it.get("state"), it["submitted_at"])
+
+    def run_rest(self, ctx: StageContext):
+        """One request per PR; used only without a token."""
         pid = ctx.project.id
         prs = list(
             ctx.db.scalars(select(Issue.number).where(Issue.project_id == pid, Issue.is_pr).order_by(Issue.number))
@@ -200,24 +282,20 @@ class ReviewsStage(Stage):
         todo = [n for n in prs if n > last]
         done = len(prs) - len(todo)
         for i, number in enumerate(todo, 1):
-            # Fetch first, then write: keeps the write transaction short (SQLite has a single writer).
-            reviews = [
-                it
-                for _, items in ctx.github.paginate(f"/repos/{ctx.project.full_name}/pulls/{number}/reviews", retry_empty=False)
-                for it in items
-                if it.get("submitted_at")  # skip pending reviews
-            ]
-            for it in reviews:
-                upsert_comment(
-                    ctx, "review", it["id"],
-                    issue_number=number,
-                    alias_id=ctx.gh_alias_id(it.get("user")),
-                    body=it.get("body"),
-                    review_state=it.get("state"),
-                    created_at=ts(it["submitted_at"]),
-                    updated_at=ts(it["submitted_at"]),
-                )  # fmt: skip
+            self.fetch_rest(ctx, number)
             ctx.cursor["last_pr"] = number
             ctx.progress(done + i, len(prs), f"PR #{number}")
             ctx.checkpoint()
         ctx.progress(len(prs), len(prs), f"{len(prs)} pull requests")
+
+
+def upsert_review(ctx: StageContext, number: int, gh_id: int, user: dict | None, body, state, submitted_at: str):
+    upsert_comment(
+        ctx, "review", gh_id,
+        issue_number=number,
+        alias_id=ctx.gh_alias_id(user),
+        body=body,
+        review_state=state,
+        created_at=ts(submitted_at),
+        updated_at=ts(submitted_at),
+    )  # fmt: skip
