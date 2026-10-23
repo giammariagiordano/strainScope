@@ -17,7 +17,6 @@ from ..models import Alias, Comment, Issue
 from ..pipeline import Stage, StageContext
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
-BATCH = 256
 
 _FENCE = re.compile(r"```.*?(```|$)", re.S)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -81,6 +80,7 @@ class TextStage(Stage):
 
     column = ""  # Issue/Comment column holding the result
     empty_value: object = None
+    batch_size = 256
 
     def tool_status(self) -> str | None:
         """None when the tool is installed, otherwise a message explaining what is missing."""
@@ -95,9 +95,11 @@ class TextStage(Stage):
     def run(self, ctx: StageContext):
         missing = self.tool_status()
         if missing:
+            ctx.cursor["skipped"] = True  # re-run automatically once the tool is available (worker start-up)
             ctx.progress(0, 0, f"Skipped: {missing}")
             ctx.log(f"{self.label} skipped: {missing}", "warn")
             return
+        ctx.cursor.pop("skipped", None)
         pid = ctx.project.id
         bots = set(ctx.db.scalars(select(Alias.id).where(Alias.project_id == pid, Alias.is_bot)))
         col_i, col_c = getattr(Issue, self.column), getattr(Comment, self.column)
@@ -119,8 +121,8 @@ class TextStage(Stage):
             return
         clf = self.open()
         try:
-            for start in range(0, len(work), BATCH):
-                chunk = work[start : start + BATCH]
+            for start in range(0, len(work), self.batch_size):
+                chunk = work[start : start + self.batch_size]
                 results = clf.classify([{"id": i, "text": t} for i, (_, t) in enumerate(chunk)])
                 for (row, _), res in zip(chunk, results):
                     self.store(row, res)
@@ -167,9 +169,10 @@ class ToxicityStage(TextStage):
 class SentimentStage(TextStage):
     name = "sentiment"
     label = "Sentiment"
-    description = "Senti4SD (Calefato et al., EMSE 2018): polarity of developers' messages, run locally."
+    description = "Senti4SD (Calefato et al., EMSE 2018) retrained on GitHub (Novielli et al., MSR 2020), run locally."
     column = "sentiment"
     empty_value = "none"
+    batch_size = 2000  # each batch starts the Java feature extractor, which loads 835 MB of embeddings
 
     @staticmethod
     def paths():
@@ -178,8 +181,8 @@ class SentimentStage(TextStage):
 
     def tool_status(self):
         python, repo = self.paths()
-        jars = [repo / "java" / f for f in ("Senti4SD-fast.jar", "dsm.bin")]
-        if not python.exists() or not all(j.exists() for j in jars):
+        needed = [repo / "java" / "Senti4SD-fast.jar", repo / "java" / "dsm.bin", repo / "Senti4SD-github.model"]
+        if not python.exists() or not all(f.exists() for f in needed):
             return "Senti4SD is not installed (see README, Text classification)"
         return None
 

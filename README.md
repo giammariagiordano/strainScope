@@ -147,14 +147,58 @@ separate), as persistent subprocesses (`backend/app/tools/*_runner.py`).
 
 | Stage | Tool | Status |
 |---|---|---|
-| `toxicity` | ToxiCR (Sarker et al., TOSEM 2023), random forest on TF-IDF with keyword removal | Installed; **off by default** (`ENABLE_TOXICITY=true`) |
-| `sentiment` | Senti4SD (Calefato et al., EMSE 2018) via pySenti4SD | Not installed yet |
+| `sentiment` | Senti4SD (Calefato et al., EMSE 2018), learner retrained on the GitHub gold standard of Novielli et al. (MSR 2020) | **Active**; 10-fold macro-F1 **0.89** on GitHub |
+| `toxicity` | ToxiCR (Sarker et al., TOSEM 2023), random forest on TF-IDF with keyword removal | **Off by default** (`ENABLE_TOXICITY=true`): F1 0.37 on GitHub |
+
+Stages skipped because a tool was missing run again automatically once it is installed (worker start-up).
+
+**Senti4SD validation.**
+
+| Check | Result |
+|---|---|
+| Published model, Stack Overflow test set, `Senti4SD.jar` features, numpy prediction | accuracy **0.8748**, identical to the published 0.8748 (prediction reimplementation is exact) |
+| Same, `Senti4SD-fast.jar` features (the pipeline's default, used here for speed) | accuracy 0.827 |
+| Published (Stack Overflow) model on the GitHub gold standard (7,122 comments) | macro-F1 0.70 |
+| **Learner retrained on the GitHub gold standard, 10-fold CV** | **macro-F1 0.892** (negative 0.885, neutral 0.890, positive 0.901) |
+| GitHub-retrained model on the Stack Overflow test set (out of domain) | accuracy 0.755 |
+
+Retraining within the platform is what Novielli et al. recommend when a gold standard exists. The Java
+extractor must run with an English locale and UTF-8 (`-Duser.language=en -Dfile.encoding=UTF-8`): with the
+system's Italian locale accuracy dropped by 0.6 points. Prediction uses `backend/app/tools/senti4sd_model.py`,
+a numpy implementation of LIBLINEAR's linear prediction, so the Linux-only `liblinear.so` shipped with
+pySenti4SD is not needed.
 
 **ToxiCR validation.** Its 10-fold cross-validation was reproduced on this machine with the authors' code
-(F1 on toxic comments 0.865 vs 0.872 published). On GitHub issue/PR comments, however, it does not transfer:
-on 10up/classifai all 13 flagged texts were false positives ("That all sounds good to me", bug-report
-templates). ToxiCR was trained on Gerrit code reviews (OpenStack, Android, Chromium). The stage therefore stays
-disabled until validated on GitHub data.
+(F1 on toxic comments 0.865 vs 0.872 published, on Gerrit code reviews). On GitHub it does not transfer:
+
+| Evaluation on GitHub issue comments (STRUDEL dataset, Raman et al. 2020: 1,597 comments, 101 toxic) | P | R | F1 |
+|---|---|---|---|
+| ToxiCR trained on code reviews | 0.54 | 0.28 | 0.37 |
+| ToxiCR retrained on GitHub only (10-fold CV) | – | 0.00 | 0.00 |
+| ToxiCR retrained on code reviews + GitHub (10-fold CV) | 0.54 | 0.27 | 0.36 |
+
+The STRUDEL dataset is 6% toxic; ordinary repositories are around 0.6% (Miller et al., ICSE 2022). With a
+false-positive rate of about 1.6% and recall 0.28, roughly nine in ten flagged messages would be false
+positives at that base rate, which matches a manual check on 10up/classifai (13 of 13 false positives).
+Per-developer toxicity would be mostly noise, so the stage stays disabled. A usable measure needs a larger
+GitHub gold standard (e.g. the locked-issue incivility dataset of Ehsani et al., MSR 2024) or manual annotation.
+
+Installing Senti4SD (pySenti4SD's DagsHub storage requires an account; the identical files are on the
+original repository's Git LFS):
+
+```bash
+cd external
+git clone https://github.com/collab-uniba/pySenti4SD.git
+(cd pySenti4SD/java && python3 ../../../backend/scripts/fetch_senti4sd_lfs.py)   # ~960 MB, SHA-256 + MD5 checked
+python3.11 -m venv senti4sd-venv && senti4sd-venv/bin/pip install "numpy<2" pandas scipy scikit-learn joblib
+mkdir -p gold && curl -L -o gold/github_gold.csv https://ndownloader.figshare.com/files/21001260   # MD5 3166bb1f…
+mkdir -p senti4sd-work/features
+python3 -c "import csv; r=list(csv.reader(open('gold/github_gold.csv',encoding='utf-8'),delimiter=';')); w=csv.writer(open('senti4sd-work/gh_gold.csv','w',newline='',encoding='utf-8'),delimiter=';',quoting=csv.QUOTE_ALL); w.writerow(['ID','Polarity','Text']); [w.writerow([x[0],x[1],x[2].rstrip('\"').replace('\n',' ')]) for x in r[1:]]"
+(cd pySenti4SD && ../senti4sd-venv/bin/python python/csv_processing.py -i ../senti4sd-work/gh_gold.csv -d sc -c text)
+java -Duser.language=en -Duser.country=US -Dfile.encoding=UTF-8 -jar pySenti4SD/java/Senti4SD-fast.jar -F A \
+  -i senti4sd-work/gh_gold_jar.csv -W pySenti4SD/java/dsm.bin -oc senti4sd-work/features/gh_gold.csv -vd 600
+senti4sd-venv/bin/python ../backend/scripts/train_senti4sd_github.py
+```
 
 Installing ToxiCR (BERT needs TensorFlow 2.5, unavailable on Apple Silicon; the random forest needs only
 scikit-learn):

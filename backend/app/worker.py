@@ -62,6 +62,7 @@ def upgrade_pipelines():
     Mining stages already done are kept; finished projects go back to the queue only to run the new
     stages and the ones after them (e.g. text classification, then aggregation).
     """
+    stages = {st.name: st for st in registry() if hasattr(st, "tool_status")}
     with session_scope() as s:
         for p in s.scalars(select(Project).where(Project.status != "deleting")):
             ensure_stage_runs(s, p.id)
@@ -69,6 +70,12 @@ def upgrade_pipelines():
                 continue
             s.flush()
             runs = list(s.scalars(select(StageRun).where(StageRun.project_id == p.id).order_by(StageRun.position)))
+            # A stage skipped because its tool was missing runs again once the tool is installed.
+            for r in runs:
+                stage = stages.get(r.stage)
+                skipped = (r.cursor or {}).get("skipped") or (r.message or "").startswith("Skipped")  # older runs
+                if r.status == "done" and skipped and stage and stage.tool_status() is None:
+                    r.status, r.cursor = "pending", {}
             first = next((r.position for r in runs if r.status != "done"), None)
             if first is None:
                 continue
