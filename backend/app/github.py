@@ -208,6 +208,8 @@ class GitHubClient:
                 if any(e.get("type") == "RATE_LIMITED" for e in body["errors"]):
                     tok.gql_remaining = 0
                     continue
+                if body.get("data") and all(e.get("type") == "NOT_FOUND" for e in body["errors"]):
+                    return body["data"]  # e.g. a deleted account: the field is null, retrying cannot help
                 log.warning("GraphQL errors (attempt %s): %s", attempt, str(body["errors"])[:300])
                 time.sleep(2**attempt)
                 continue

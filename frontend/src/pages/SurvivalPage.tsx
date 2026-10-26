@@ -205,19 +205,22 @@ export default function SurvivalPage() {
               onChange={setOutcome}
               options={[
                 { id: "abandonment", label: "Abandonment" },
+                { id: "disengagement", label: "Left GitHub" },
                 { id: "break", label: "Any long pause" },
               ]}
             />
             <p className="text-[11px] leading-snug text-muted">
               {outcome === "abandonment"
                 ? "Stops and never comes back. Pauses followed by a return are not events, however long."
-                : `Every pause of ≥ ${abandon} months is an event, whether the developer returns or not (recurrent).`}
+                : outcome === "disengagement"
+                  ? "Abandons and shows no public GitHub activity elsewhere in the next 12 months. Those who move to other repositories are censored at their exit; unchecked accounts are excluded."
+                  : `Every pause of ≥ ${abandon} months is an event, whether the developer returns or not (recurrent).`}
             </p>
           </Section>
           <Section
-            title={outcome === "abandonment" ? "Silence needed to call it abandonment" : "Minimum pause length"}
+            title={outcome !== "break" ? "Silence needed to call it abandonment" : "Minimum pause length"}
             hint={
-              outcome === "abandonment"
+              outcome !== "break"
                 ? "Months without activity before the end of the data. Shorter final silences are censored: they may still return"
                 : "Months without activity that count as a long pause"
             }
@@ -297,19 +300,21 @@ export default function SurvivalPage() {
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <StatTile label="Developers at risk" value={fmt.int(ds.at_risk_subjects)} hint={`of ${fmt.int(ds.subjects)} developers`} />
               <StatTile
-                label={outcome === "abandonment" ? "Abandonments" : "Long pauses"}
+                label={outcome === "abandonment" ? "Abandonments" : outcome === "disengagement" ? "Left GitHub" : "Long pauses"}
                 value={fmt.int(ds.events)}
                 hint={
-                  outcome === "abandonment"
-                    ? `${ds.breaks_with_return} long pauses with return not counted`
+                  outcome === "disengagement"
+                    ? `${ds.moved_elsewhere} moved to other repositories (censored) · ${ds.unknown_after_exit} unchecked (excluded)`
+                    : outcome === "abandonment"
+                    ? `${ds.breaks_with_return} long pauses with return not counted · ${ds.moved_elsewhere} still active elsewhere`
                     : `${ds.breaks_with_return} with return · ${ds.abandonments} without`
                 }
               />
               <StatTile label="Active months at risk" value={fmt.int(ds.intervals)} hint="pauses are not at risk" />
               <StatTile
                 label="Excluded"
-                value={fmt.int(ds.no_risk_time + ds.late_entry)}
-                hint={`${ds.no_risk_time} no time at risk · ${ds.late_entry} joined too late`}
+                value={fmt.int(ds.no_risk_time + ds.late_entry + ds.unknown_after_exit)}
+                hint={`${ds.no_risk_time} no time at risk · ${ds.late_entry} joined too late${ds.archived_projects_excluded ? ` · ${ds.archived_projects_excluded} archived projects left out` : ""}`}
               />
             </div>
           )}
@@ -410,7 +415,7 @@ export default function SurvivalPage() {
           {result && result.km.groups.length > 0 && (
             <Card>
               <CardHeader
-                title={outcome === "abandonment" ? "Kaplan–Meier: share of developers who have not abandoned" : "Kaplan–Meier: share of developers without a long pause yet"}
+                title={outcome !== "break" ? "Kaplan–Meier: share of developers who have not abandoned" : "Kaplan–Meier: share of developers without a long pause yet"}
                 subtitle={
                   result.km.logrank_p != null ? `Log-rank test p = ${fmtP(result.km.logrank_p)}` : "Grouping measured at entry"
                 }
@@ -459,8 +464,8 @@ export default function SurvivalPage() {
                   developer is not at risk and re-enters when they come back.
                 </p>
                 <p>
-                  {outcome === "abandonment"
-                    ? `Abandonment = the developer never comes back. Because the future is unknown, a final silence counts only when it lasts at least ${abandon} months before the end of the data; more recent exits are censored.`
+                  {outcome !== "break"
+                    ? `${outcome === "disengagement" ? "Left GitHub = abandonment followed by 12 months without public GitHub activity elsewhere; those who move on to other repositories are censored at their exit. " : ""}Abandonment = the developer never comes back. Because the future is unknown, a final silence counts only when it lasts at least ${abandon} months before the end of the data; more recent exits are censored.`
                     : `Long pause = at least ${abandon} months without activity, with or without return. A developer can have several pauses (recurrent events), so standard errors should be clustered by person.`}{" "}
                   Covariates for month t summarize months t−{window}…t−1.
                 </p>

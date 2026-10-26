@@ -68,6 +68,7 @@ DEVELOPER_VARS = [
     Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity.", "share"),
     Variable("toxic_thread_share", "Toxic conversations joined", "Share of all conversations the developer wrote in that are toxic.", "share"),
     Variable("community_toxicity", "Community toxicity", "Share of all the project's conversations that are toxic (project-level).", "share"),
+    Variable("active_elsewhere_after", "Active elsewhere after leaving", "For developers who left (≥ 2 active months, last activity ≥ 6 months before the end): 1 if they made public GitHub contributions to other repositories (or private ones) in the 12 months after their last month here, 0 if not; empty if not checked.", "binary"),
     Variable("long_pauses", "Long pauses", "Pauses of at least the threshold after which the developer came back."),
     Variable("abandoned", "Abandoned", "1 if the developer has been inactive for at least the abandonment threshold at the end of observation. Right-censored: recent leavers count as 0.", "binary"),
 ]  # fmt: skip
@@ -101,10 +102,12 @@ RESPONSE_CAP_DAYS = 30
 
 
 def response_times(db: Session, project_ids: list[int]) -> pd.DataFrame:
-    """One row per issue/PR opened by a human: days until the first comment or review by another human
-    (bots and the opener excluded). `unanswered` = no such response within RESPONSE_CAP_DAYS; `days` is then
-    capped at RESPONSE_CAP_DAYS so medians stay defined."""
-    cols = ["project_id", "developer_id", "month", "is_pr", "days", "unanswered"]
+    """One row per issue/PR opened by a human: days until the first response by another human (a comment or
+    review, or for a PR its merge by someone else; bots and the opener excluded). `unanswered` = no such response
+    within RESPONSE_CAP_DAYS; `days` is then capped at RESPONSE_CAP_DAYS so medians stay defined.
+    For PRs, `outcome_known` says whether the pr_outcomes stage fetched merges: without it a silently merged PR
+    would look unanswered. `resolved_month` is the month of the merge or close (None while open)."""
+    cols = ["project_id", "developer_id", "month", "is_pr", "outcome_known", "merged", "resolved_month", "days", "unanswered"]
     dev_of = dict(
         db.execute(
             select(Alias.id, Alias.developer_id)
@@ -113,8 +116,12 @@ def response_times(db: Session, project_ids: list[int]) -> pd.DataFrame:
         ).tuples().all()
     )  # fmt: skip
     issues = pd.DataFrame(
-        db.execute(select(Issue.project_id, Issue.number, Issue.alias_id, Issue.is_pr, Issue.created_at).where(Issue.project_id.in_(project_ids))).all(),
-        columns=["project_id", "number", "alias_id", "is_pr", "created_at"],
+        db.execute(
+            select(Issue.project_id, Issue.number, Issue.alias_id, Issue.is_pr, Issue.created_at, Issue.closed_at,
+                   Issue.merged, Issue.merged_at, Issue.merged_by_alias_id)
+            .where(Issue.project_id.in_(project_ids))
+        ).all(),
+        columns=["project_id", "number", "alias_id", "is_pr", "created_at", "closed_at", "merged", "merged_at", "merger_alias"],
     )  # fmt: skip
     comments = pd.DataFrame(
         db.execute(select(Comment.project_id, Comment.issue_number, Comment.alias_id, Comment.created_at).where(Comment.project_id.in_(project_ids))).all(),
@@ -126,18 +133,28 @@ def response_times(db: Session, project_ids: list[int]) -> pd.DataFrame:
     issues = issues.dropna(subset=["developer_id"])
     comments["responder"] = comments["alias_id"].map(dev_of)
     comments = comments.dropna(subset=["responder"])
-    m = issues.merge(comments[["project_id", "number", "responder", "responded_at"]], on=["project_id", "number"], how="left")
+    merges = issues.loc[issues["merged"].eq(True), ["project_id", "number", "merger_alias", "merged_at"]]
+    merges = pd.DataFrame({"project_id": merges["project_id"], "number": merges["number"],
+                           "responder": merges["merger_alias"].map(dev_of), "responded_at": merges["merged_at"]}).dropna()  # fmt: skip
+    responses = pd.concat([comments[["project_id", "number", "responder", "responded_at"]], merges])
+    m = issues.merge(responses, on=["project_id", "number"], how="left")
     m = m[m["responder"].isna() | (m["responder"] != m["developer_id"])]
     first = m.groupby(["project_id", "number"]).agg(
         developer_id=("developer_id", "first"), is_pr=("is_pr", "first"), created_at=("created_at", "first"),
+        closed_at=("closed_at", "first"), merged=("merged", "first"), merged_at=("merged_at", "first"),
         responded_at=("responded_at", "min"),
     )
-    days = (first["responded_at"] - first["created_at"]).dt.total_seconds() / 86400
+    days = (pd.to_datetime(first["responded_at"]) - first["created_at"]).dt.total_seconds() / 86400
+    ym = lambda t: None if pd.isna(t) else f"{t.year:04d}-{t.month:02d}"  # noqa: E731
+    resolved = [ym(ma) if mg is True else ym(c) for mg, ma, c in zip(first["merged"], first["merged_at"], first["closed_at"])]
     out = pd.DataFrame({
         "project_id": first.index.get_level_values(0),
         "developer_id": first["developer_id"].astype(int).to_numpy(),
-        "month": first["created_at"].map(lambda t: f"{t.year:04d}-{t.month:02d}").to_numpy(),
+        "month": first["created_at"].map(ym).to_numpy(),
         "is_pr": first["is_pr"].astype(bool).to_numpy(),
+        "outcome_known": first["merged"].notna().to_numpy(),
+        "merged": first["merged"].to_numpy(),
+        "resolved_month": resolved,
         "unanswered": (days.isna() | (days > RESPONSE_CAP_DAYS)).to_numpy(),
         "days": days.clip(lower=0, upper=RESPONSE_CAP_DAYS).fillna(RESPONSE_CAP_DAYS).to_numpy(),
     })  # fmt: skip
@@ -264,6 +281,12 @@ def developer_frame(
     out["toxic_thread_share"] = out["toxic_threads"] / out["threads"].replace(0, np.nan)
     overall = community_toxicity(db, out["project_id"].unique().tolist(), by_month=False)
     out["community_toxicity"] = out["project_id"].map(overall)
+    checked = db.execute(
+        select(Developer.id, Developer.after_exit_contributions, Developer.after_exit_private)
+        .where(Developer.id.in_(out["developer_id"].unique().tolist()), Developer.after_exit_from.is_not(None))
+    ).tuples().all()  # fmt: skip
+    elsewhere = {d: float(pub + (priv or 0) > 0) for d, pub, priv in checked if pub is not None}
+    out["active_elsewhere_after"] = out["developer_id"].map(elsewhere)
     return out[
         ["project_id", "developer_id", "project", "developer", "first_month", "last_month",
          *(v.key for v in DEVELOPER_VARS)]

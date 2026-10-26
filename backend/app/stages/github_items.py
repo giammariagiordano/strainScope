@@ -58,7 +58,7 @@ class IssuesStage(Stage):
 
     def run(self, ctx: StageContext):
         pid = ctx.project.id
-        since = ctx.cursor.get("since")
+        since = ctx.cursor.get("since") or ctx.project.since_iso
         params = {"state": "all", "sort": "updated", "direction": "asc"}
         if since:
             params["since"] = since
@@ -71,6 +71,24 @@ class IssuesStage(Stage):
             ctx.checkpoint()
         ctx.log(f"Issues/PRs synced up to {ctx.cursor.get('since')}")
         self.fill_missing(ctx)
+        self.check_complete(ctx)
+
+    COUNT_QUERY = "query($q: String!) { search(type: ISSUE, query: $q, first: 0) { issueCount } }"
+
+    def check_complete(self, ctx: StageContext):
+        """Fail loudly instead of finishing with a silently truncated listing: compare with GitHub's own count
+        of issues and PRs created in the mined period (needs a token for GraphQL; skipped otherwise)."""
+        if not any(t.token for t in ctx.github.tokens):
+            return
+        since = ctx.project.since
+        name = ctx.github.get(f"/repos/{ctx.project.full_name}").json()["full_name"]  # search needs the current name
+        q = f"repo:{name}" + (f" created:>={since:%Y-%m-%d}" if since else "")
+        expected = ctx.github.graphql(self.COUNT_QUERY, {"q": q})["search"]["issueCount"]
+        where = [Issue.project_id == ctx.project.id] + ([Issue.created_at >= since] if since else [])
+        mined = ctx.db.scalar(select(func.count()).select_from(Issue).where(*where))
+        ctx.cursor["expected"] = expected
+        if mined < 0.98 * expected:
+            raise RuntimeError(f"only {mined} of {expected} issues/PRs mined: the listing was truncated; run the stage again")
 
     def fill_missing(self, ctx: StageContext):
         """Issues and PRs share one sequence 1..N: fetch individually every number the listing did not return.
@@ -87,6 +105,9 @@ class IssuesStage(Stage):
         repo_url = ctx.github.get(f"/repos/{repo}").json()["url"]
         have = set(ctx.db.scalars(select(Issue.number).where(Issue.project_id == pid)))
         start = ctx.cursor.get("filled_upto", 0)
+        if ctx.project.since:  # numbers are chronological: older ones are outside the mined period
+            first = ctx.db.scalar(select(func.min(Issue.number)).where(Issue.project_id == pid, Issue.created_at >= ctx.project.since))
+            start = max(start, (first or highest + 1) - 1)
         missing = [n for n in range(start + 1, highest + 1) if n not in have]
         recovered = ctx.cursor.get("recovered", 0)
         for i, n in enumerate(missing, 1):
@@ -117,7 +138,7 @@ class CommentsStage(Stage):
     def run(self, ctx: StageContext):
         pid = ctx.project.id
         for kind, (endpoint, url_field) in self.ENDPOINTS.items():
-            since = ctx.cursor.get(kind)
+            since = ctx.cursor.get(kind) or ctx.project.since_iso
             params = {"sort": "updated", "direction": "asc"}
             if since:
                 params["since"] = since
@@ -187,13 +208,14 @@ class CommentsStage(Stage):
 
 
 REVIEWS_QUERY = """
-query($owner: String!, $name: String!, $cursor: String) {
+query($owner: String!, $name: String!, $cursor: String, $direction: OrderDirection = ASC) {
   repository(owner: $owner, name: $name) {
-    pullRequests(first: 100, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC}) {
+    pullRequests(first: 100, after: $cursor, orderBy: {field: CREATED_AT, direction: $direction}) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
         number
+        createdAt
         reviews(first: 100) {
           totalCount
           pageInfo { hasNextPage }
@@ -228,14 +250,21 @@ class ReviewsStage(Stage):
         owner, name = ctx.project.owner, ctx.project.name
         seen: set[int] = set(ctx.cursor.get("seen", []))
         rest_fallback = ctx.cursor.get("rest_fallback", 0)
+        # With a start date, newest first and stop at the first older PR instead of paging through all of them.
+        since = ctx.project.since
         while True:
-            data = ctx.github.graphql(REVIEWS_QUERY, {"owner": owner, "name": name, "cursor": ctx.cursor.get("gql_cursor")})
+            data = ctx.github.graphql(REVIEWS_QUERY, {"owner": owner, "name": name, "cursor": ctx.cursor.get("gql_cursor"),
+                                                      "direction": "DESC" if since else "ASC"})  # fmt: skip
             repo = data.get("repository")
             if repo is None:
                 raise RuntimeError("GraphQL: repository not found")
             prs = repo["pullRequests"]
+            reached_since = False
             for pr in prs["nodes"]:
                 number = pr["number"]
+                if since and ts(pr["createdAt"]) < since:
+                    reached_since = True
+                    break
                 if pr["reviews"]["pageInfo"]["hasNextPage"]:
                     self.fetch_rest(ctx, number)  # > 100 reviews: rare, use REST for this PR
                     rest_fallback += 1
@@ -250,11 +279,14 @@ class ReviewsStage(Stage):
                               seen=sorted(seen), rest_fallback=rest_fallback)  # fmt: skip
             ctx.progress(len(seen), prs["totalCount"], f"{len(seen)}/{prs['totalCount']} pull requests (GraphQL)")
             ctx.checkpoint()
-            if not prs["pageInfo"]["hasNextPage"]:
+            if reached_since or not prs["pageInfo"]["hasNextPage"]:
                 break
 
         # PRs known from the issues listing but not returned by GraphQL: fetch them over REST.
-        known = set(ctx.db.scalars(select(Issue.number).where(Issue.project_id == pid, Issue.is_pr)))
+        q = select(Issue.number).where(Issue.project_id == pid, Issue.is_pr)
+        if since:
+            q = q.where(Issue.created_at >= since)  # older PRs updated after `since` are outside the period
+        known = set(ctx.db.scalars(q))
         missing = sorted(known - seen)
         for n in missing:
             self.fetch_rest(ctx, n)

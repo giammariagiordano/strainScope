@@ -252,6 +252,9 @@ export interface SurvivalResult {
     subjects_with_event: number;
     breaks_with_return: number;
     abandonments: number;
+    moved_elsewhere: number;
+    unknown_after_exit: number;
+    archived_projects_excluded: number;
     at_risk_subjects: number;
     intervals: number;
   };

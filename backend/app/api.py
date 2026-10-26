@@ -1,7 +1,7 @@
 import re
 import shutil
 from collections import defaultdict
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -80,6 +80,7 @@ def dev_name(d: Developer) -> str:
 
 class NewProjects(BaseModel):
     urls: list[str]
+    since: date | None = None  # mine GitHub API data only from this date (git history is always complete)
 
 
 def project_summary(s, p: Project) -> dict:
@@ -127,7 +128,8 @@ def create_projects(body: NewProjects):
             if existing:
                 skipped.append(existing.full_name)
                 continue
-            p = Project(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", status="queued")
+            since = datetime(body.since.year, body.since.month, body.since.day) if body.since else None
+            p = Project(owner=owner, name=name, url=f"https://github.com/{owner}/{name}", status="queued", since=since)
             s.add(p)
             s.flush()
             ensure_stage_runs(s, p.id)
@@ -598,6 +600,7 @@ class SurvivalQuery(BaseModel):
     cluster: str = "person"
     ph_transform: str = "rank"
     group: str = "core"
+    exclude_archived: bool = True
 
 
 @app.post("/api/survival")
@@ -616,7 +619,7 @@ def survival_analysis(q: SurvivalQuery):
     with session_scope() as s:
         intervals, stats = survival.build_intervals(
             s, q.project_ids or None, max(1, q.abandon_months), max(1, q.window), max(1, q.min_active_months),
-            q.outcome,
+            q.outcome, q.exclude_archived,
         )
     out = {"dataset": {**stats, "at_risk_subjects": int(intervals["sid"].nunique()) if len(intervals) else 0,
                        "intervals": len(intervals)}}  # fmt: skip

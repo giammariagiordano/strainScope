@@ -37,6 +37,9 @@ class Project(Base):
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Mine GitHub API data (issues, comments, reviews, PR outcomes, commit-author links) only from this date;
+    # git history is always complete (it is local and cheap). None = everything.
+    since: Mapped[datetime | None] = mapped_column(DateTime)
 
     __table_args__ = (UniqueConstraint("owner", "name"),)
 
@@ -88,6 +91,12 @@ class Developer(Base):
     files_authored: Mapped[int] = mapped_column(Integer, default=0)
     first_activity: Mapped[datetime | None] = mapped_column(DateTime)
     last_activity: Mapped[datetime | None] = mapped_column(DateTime)
+    # Public GitHub activity elsewhere in the 12 months after the last month active here (post_exit stage).
+    # after_exit_from is set once checked; the counts stay None if the account no longer exists.
+    after_exit_from: Mapped[datetime | None] = mapped_column(DateTime)
+    after_exit_contributions: Mapped[int | None] = mapped_column(Integer)  # other public repositories
+    after_exit_repos: Mapped[int | None] = mapped_column(Integer)
+    after_exit_private: Mapped[int | None] = mapped_column(Integer)  # restricted (private) contributions
 
 
 class Alias(Base):
@@ -105,6 +114,9 @@ class Alias(Base):
     gh_type: Mapped[str | None] = mapped_column(String(20))  # User | Bot | Organization
     is_bot: Mapped[bool] = mapped_column(Boolean, default=False)
     developer_id: Mapped[int | None] = mapped_column(ForeignKey("developers.id", ondelete="SET NULL"), index=True)
+    # AI agent account (ai_signals stage): tool name and role, "author" (opens PRs, commits) or "reviewer".
+    ai_tool: Mapped[str | None] = mapped_column(String(30))
+    ai_role: Mapped[str | None] = mapped_column(String(10))
 
     __table_args__ = (UniqueConstraint("project_id", "key"),)
 
@@ -124,6 +136,8 @@ class Commit(Base):
     additions: Mapped[int] = mapped_column(Integer, default=0)
     deletions: Mapped[int] = mapped_column(Integer, default=0)
     files_changed: Mapped[int] = mapped_column(Integer, default=0)
+    # AI tool credited by the commit (co-author trailer, "Generated with" line, or agent author); ai_signals stage.
+    ai_tool: Mapped[str | None] = mapped_column(String(30))
 
     __table_args__ = (
         UniqueConstraint("project_id", "sha"),
@@ -165,6 +179,14 @@ class Issue(Base):
     # Whole-conversation toxicity (body + conversation comments): 1 / 0, -1 = nothing to classify. docs/TOXICITY.md
     conv_toxic: Mapped[int | None] = mapped_column(Integer)
     conv_toxicity_score: Mapped[float | None] = mapped_column(Float)
+    # Pull-request outcome (pr_outcomes stage); None = not fetched.
+    merged: Mapped[bool | None] = mapped_column(Boolean)
+    merged_at: Mapped[datetime | None] = mapped_column(DateTime)
+    merged_by_alias_id: Mapped[int | None] = mapped_column(ForeignKey("aliases.id", ondelete="SET NULL"))
+    # AI involvement of a PR (ai_signals stage): source "agent" (opened by an agent account) or "disclosed"
+    # (opened by a person whose description credits an AI tool); None = no declared AI.
+    ai_tool: Mapped[str | None] = mapped_column(String(30))
+    ai_source: Mapped[str | None] = mapped_column(String(10))
 
     __table_args__ = (UniqueConstraint("project_id", "number"),)
 

@@ -2,6 +2,7 @@
 
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import select
@@ -29,6 +30,11 @@ class ProjectRef:
     id: int
     owner: str
     name: str
+    since: datetime | None = None  # see Project.since
+
+    @property
+    def since_iso(self) -> str | None:
+        return self.since.isoformat() + "Z" if self.since else None
 
     @property
     def full_name(self) -> str:
@@ -131,10 +137,12 @@ class Stage:
 
 def registry() -> list[Stage]:
     from .stages.aggregate import AggregateStage
+    from .stages.ai import AISignalsStage
     from .stages.bots import BotsStage
     from .stages.clone import CloneStage
     from .stages.commit_authors import CommitAuthorsStage
     from .stages.commits import CommitsStage
+    from .stages.context import PostExitStage, PullOutcomesStage, RepoInfoStage
     from .stages.github_items import CommentsStage, IssuesStage, ReviewsStage
     from .stages.identities import IdentitiesStage
     from .stages.structural import StructuralStage
@@ -154,6 +162,11 @@ def registry() -> list[Stage]:
         ConversationToxicityStage(),
         AggregateStage(),
         StructuralStage(),
+        # Context stages last: adding them to mined projects recomputes nothing else.
+        RepoInfoStage(),
+        PullOutcomesStage(),
+        PostExitStage(),
+        AISignalsStage(),
     ]
 
 

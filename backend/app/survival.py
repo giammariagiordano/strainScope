@@ -65,8 +65,9 @@ COVARIATES = [
     Covariate("truck_factor_member_tv", "Truck-factor member", "1 if in the truck-factor set computed from the commits made up to the end of the previous month (no look-ahead)."),
     Covariate("project_active_devs", "Other active developers", "Distinct other developers active in the project in the window (project size and decline).", count=True),
     Covariate("project_trend", "Project activity trend", "log((others' activity in the window + 1) / (others' activity in the previous window + 1)); activity = commits + comments + reviews + issues/PRs opened. Negative = the project is slowing down."),
-    Covariate("unanswered_share", "Unanswered issues", "Share of the developer's issues opened in the window that got no comment from another person within 30 days; 0 if none opened (include Issues + PRs opened). PRs are excluded: merges are not mined, so a silent merge would look unanswered.", default=False),
-    Covariate("response_days", "Days to first response", "Median days until another person first commented on the developer's issues opened in the window (unanswered = 30). Undefined, so the interval is excluded, if no issue was opened.", default=False),
+    Covariate("unanswered_share", "Unanswered issues/PRs", "Share of the developer's issues and PRs opened in the window with no response from another person within 30 days (comment, review, or merge by someone else); 0 if none opened (include Issues + PRs opened). PRs count only once their merges are fetched (pr_outcomes).", default=False),
+    Covariate("response_days", "Days to first response", "Median days to the first response by another person on the developer's issues and PRs opened in the window (unanswered = 30). Undefined, so the interval is excluded, if none was opened.", default=False),
+    Covariate("pr_rejected_share", "PRs rejected", "Share of the developer's PRs opened in the window and resolved before the interval month that were closed without merge (including PRs the author closed); 0 if none resolved.", default=False),
 ]  # fmt: skip
 COVARIATE_KEYS = [c.key for c in COVARIATES]
 
@@ -79,6 +80,7 @@ CLUSTERS = {
 PH_TRANSFORMS = ("rank", "log", "identity")
 OUTCOMES = {
     "abandonment": "Abandonment: stops and never comes back",
+    "disengagement": "Disengagement: abandons and shows no public GitHub activity elsewhere in the next 12 months",
     "break": "Any long pause (≥ K months, with or without return; recurrent)",
 }
 
@@ -125,6 +127,7 @@ class ProjectSeries:
     activity: dict[int, dict[int, float]]  # month -> {developer: activity}
     tf_history: list[tuple[int, set[int]]] | None  # sorted (month, truck-factor members at its end); None = not computed
     issues: dict[int, dict[int, list[tuple[float, bool]]]]  # developer -> month -> [(days to response, unanswered)]
+    prs: dict[int, dict[int, list[tuple[bool, int | None]]]]  # developer -> month opened -> [(merged, month resolved)]
 
 
 def _others(series: ProjectSeries, did: int, lo: int, hi: int) -> tuple[set[int], float]:
@@ -145,7 +148,7 @@ def context_covariates(series: ProjectSeries | None, did: int, t: int, window: i
     nan = np.nan
     if series is None:
         return {"truck_factor_member_tv": nan, "project_active_devs": nan, "project_trend": nan,
-                "unanswered_share": nan, "response_days": nan}  # fmt: skip
+                "unanswered_share": nan, "response_days": nan, "pr_rejected_share": nan}  # fmt: skip
     devs, act = _others(series, did, t - window, t)
     _, prev = _others(series, did, t - 2 * window, t - window)
     tf = nan
@@ -156,12 +159,15 @@ def context_covariates(series: ProjectSeries | None, did: int, t: int, window: i
                 break
             tf = float(did in members)
     opened = [x for m in range(t - window, t) for x in series.issues.get(did, {}).get(m, [])]
+    # PR outcomes known before t only: a later merge or close is the future.
+    resolved = [merged for m in range(t - window, t) for merged, r in series.prs.get(did, {}).get(m, []) if r is not None and r < t]
     return {
         "truck_factor_member_tv": tf,
         "project_active_devs": float(len(devs)),
         "project_trend": float(np.log1p(act) - np.log1p(prev)),
         "unanswered_share": float(np.mean([u for _, u in opened])) if opened else 0.0,
         "response_days": float(np.median([d for d, _ in opened])) if opened else nan,
+        "pr_rejected_share": float(np.mean([not mg for mg in resolved])) if resolved else 0.0,
     }
 
 
@@ -187,9 +193,12 @@ def subject_rows(
     community: dict[int, tuple[int, int]] | None = None,
     series: ProjectSeries | None = None,
     developer_id: int | None = None,
+    left_github: bool | None = None,
 ) -> tuple[list[dict], str]:
     """Risk-set rows for one subject. `months` are the sorted active month indices; `values` hold the
-    monthly activity aligned with them. Returns (rows, status) with status ok | no_risk_time | late_entry."""
+    monthly activity aligned with them. Returns (rows, status) with status ok | no_risk_time | late_entry |
+    unknown_after_exit. `left_github` (disengagement outcome): True if no public GitHub activity elsewhere in the
+    12 months after the last active month, False if active elsewhere, None if not checked."""
     if len(months) < min_active_months:
         return [], "no_risk_time"
     first, last = int(months[0]), int(months[-1])
@@ -232,7 +241,15 @@ def subject_rows(
         gap_after = (nxt - t - 1) if nxt is not None else (project_end - t)
         is_break = gap_after >= k
         returned = nxt is not None
-        event = is_break if outcome == "break" else (is_break and not returned)
+        abandons = is_break and not returned
+        if outcome == "disengagement" and abandons and left_github is None:
+            return [], "unknown_after_exit"  # cannot tell leaving the project from leaving GitHub
+        if outcome == "break":
+            event = is_break
+        elif outcome == "disengagement":
+            event = abandons and bool(left_github)  # moved elsewhere = censored at exit (cause-specific hazard)
+        else:
+            event = abandons
         i = t - first
         c = w["commits"][i]
         rows.append(
@@ -241,7 +258,8 @@ def subject_rows(
                 "start": t - entry - 1,
                 "stop": t - entry,
                 "event": int(event),
-                "event_type": ("break_return" if returned else "abandonment") if is_break else "",
+                "event_type": ("break_return" if returned else "moved_elsewhere" if left_github is False else "abandonment")
+                if is_break else "",
                 "core": w_core[i],
                 "centrality": w_cent[i],
                 "off_hours_share": w["off_hours_commits"][i] / c if c else 0.0,
@@ -283,11 +301,38 @@ def project_series(db: Session, dm: pd.DataFrame) -> dict[int, ProjectSeries]:
         ).tuples()
     }  # fmt: skip
     issues: dict[int, dict[int, dict[int, list]]] = {}
+    prs: dict[int, dict[int, dict[int, list]]] = {}
     rt = response_times(db, pids)
-    rt = rt[~rt["is_pr"]]
-    for pid, did, month, days, unanswered in zip(rt["project_id"], rt["developer_id"], rt["month"], rt["days"], rt["unanswered"]):
-        issues.setdefault(int(pid), {}).setdefault(int(did), {}).setdefault(_midx(month), []).append((float(days), bool(unanswered)))
-    return {pid: ProjectSeries(activity.get(pid, {}), histories.get(pid), issues.get(pid, {})) for pid in pids}
+    for r in rt.itertuples():
+        m = _midx(r.month)
+        if r.is_pr and not r.outcome_known:
+            continue  # merges not fetched: a silently merged PR would look unanswered
+        issues.setdefault(int(r.project_id), {}).setdefault(int(r.developer_id), {}).setdefault(m, []).append((float(r.days), bool(r.unanswered)))
+        if r.is_pr:
+            resolved = _midx(r.resolved_month) if r.resolved_month else None
+            prs.setdefault(int(r.project_id), {}).setdefault(int(r.developer_id), {}).setdefault(m, []).append((bool(r.merged), resolved))
+    return {pid: ProjectSeries(activity.get(pid, {}), histories.get(pid), issues.get(pid, {}), prs.get(pid, {})) for pid in pids}
+
+
+def archived_projects(db: Session, project_ids: list[int]) -> set[int]:
+    return {
+        pid for pid, value in db.execute(
+            select(ProjectMetric.project_id, ProjectMetric.value)
+            .where(ProjectMetric.project_id.in_(project_ids), ProjectMetric.key == "repo_info")
+        ).tuples() if value.get("archived")
+    }  # fmt: skip
+
+
+def left_github(db: Session, developer_ids: list[int]) -> dict[int, bool | None]:
+    """True if no public GitHub activity elsewhere (nor private contributions) in the 12 months after the last
+    active month, False if active elsewhere, None if not checked or the account no longer exists."""
+    out = {}
+    for did, start, public, private in db.execute(
+        select(Developer.id, Developer.after_exit_from, Developer.after_exit_contributions, Developer.after_exit_private)
+        .where(Developer.id.in_(developer_ids))
+    ):
+        out[did] = None if start is None or public is None else (public + (private or 0)) == 0
+    return out
 
 
 def build_intervals(
@@ -297,12 +342,19 @@ def build_intervals(
     window: int = 3,
     min_active_months: int = 1,
     outcome: str = "abandonment",
+    exclude_archived: bool = True,
 ) -> tuple[pd.DataFrame, dict]:
-    """Return the counting-process table (one row per subject × active month at risk) and summary counts."""
+    """Return the counting-process table (one row per subject × active month at risk) and summary counts.
+    Archived repositories are left out by default: everyone "abandons" a project that was shut down."""
     k = abandon_months or settings.abandon_months
     dm = developer_month_frame(db, project_ids, k)
     stats = {"subjects": 0, "late_entry": 0, "no_risk_time": 0, "events": 0, "subjects_with_event": 0,
-             "breaks_with_return": 0, "abandonments": 0}  # fmt: skip
+             "breaks_with_return": 0, "abandonments": 0, "moved_elsewhere": 0, "unknown_after_exit": 0,
+             "archived_projects_excluded": 0}  # fmt: skip
+    if exclude_archived and not dm.empty:
+        archived = archived_projects(db, [int(p) for p in dm["project_id"].unique()])
+        stats["archived_projects_excluded"] = len(archived)
+        dm = dm[~dm["project_id"].isin(archived)]
     columns = ["sid", "person", "project", "developer", "episode", "start", "stop", "event", "event_type", *COVARIATE_KEYS]
     if dm.empty:
         return pd.DataFrame(columns=columns), stats
@@ -320,9 +372,10 @@ def build_intervals(
         .where(Issue.project_id.in_(dm["project_id"].unique().tolist()), Issue.conv_toxic.in_([0, 1]))
     ):
         m = created.year * 12 + created.month - 1
-        n, k = communities.setdefault(pid, {}).get(m, (0, 0))
-        communities[pid][m] = (n + 1, k + toxic)
+        n_conv, n_toxic = communities.setdefault(pid, {}).get(m, (0, 0))  # not `k`: that is the threshold
+        communities[pid][m] = (n_conv + 1, n_toxic + toxic)
     series = project_series(db, dm)
+    after_exit = left_github(db, [int(d) for d in dm["developer_id"].unique()])
 
     rows = []
     for (pid, did), g in dm.groupby(["project_id", "developer_id"], sort=False):
@@ -333,7 +386,7 @@ def build_intervals(
                                                      "negative_emitted", "negative_received", "threads", "toxic_threads")}  # fmt: skip
         sub, status = subject_rows(
             g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
-            k, window, min_active_months, outcome, communities.get(pid), series.get(pid), int(did),
+            k, window, min_active_months, outcome, communities.get(pid), series.get(pid), int(did), after_exit.get(did),
         )  # fmt: skip
         if status != "ok":
             stats[status] += 1
@@ -348,6 +401,7 @@ def build_intervals(
         stats["subjects_with_event"] += int(events > 0)
         stats["breaks_with_return"] += sum(r["event_type"] == "break_return" for r in sub)
         stats["abandonments"] += sum(r["event_type"] == "abandonment" for r in sub)
+        stats["moved_elsewhere"] += sum(r["event_type"] == "moved_elsewhere" for r in sub)
     return pd.DataFrame(rows, columns=columns), stats
 
 

@@ -102,8 +102,21 @@ re-running it never duplicates data.
 | 9 | `aggregate` | Developer × month activity table (commits, lines, off-hours, issues, PRs, comments, reviews) | — |
 | 10 | `structural` | Truck factor (at HEAD and month by month), developer network, centrality, core/peripheral (written into the monthly table) | — |
 
+| 11 | `repo_info` | Repository metadata: archived flag, creation and last push dates (REST, one request) | — |
+| 12 | `pr_outcomes` | Whether, when and by whom each PR was merged (GraphQL, 100 PRs per request) | GraphQL cursor |
+| 13 | `post_exit` | For leavers (≥ 2 active months, silent ≥ 6 months at the end): public contributions to *other* repositories in the 12 months after their last month here (GraphQL `contributionsCollection`, one request per person) | developers already checked |
+| 14 | `ai_signals` | Declared AI involvement: agent accounts (authors and reviewers), AI co-author trailers in commits (local git log), AI credits in PR descriptions; see [docs/AI_STUDY.md](docs/AI_STUDY.md) | — |
+
 Stages 7–10 only compute on stored data: they are fast and can be re-run on their own
-(e.g. after changing a threshold) without mining again.
+(e.g. after changing a threshold) without mining again. Stages 11–14 come last so that adding them to
+already-mined projects recomputes nothing else. (The text-classification stages run between `identities`
+and `aggregate`.)
+
+**Mining from a date.** A project can be added with `since` (API: `POST /api/projects {"urls": [...], "since":
+"2023-01-01"}`): issues, comments, commit-author links, reviews and PR outcomes are then mined only from that date
+(reviews and outcomes newest first, stopping at the first older PR), which makes large projects affordable. The git
+history is always complete, so the truck factor and file authorship use all of it; activity-based metrics before
+`since` are incomplete and should not be analysed.
 
 ## Completeness checks
 
@@ -117,6 +130,10 @@ official `gh` CLI), which would silently drop data. The miner therefore:
   individually; numbers that do not exist (deleted, transferred, discussions) answer 404/410 and are skipped;
 - **issue comments**: GitHub reports each issue's comment count; threads with fewer saved comments are
   re-fetched one by one.
+- **issues/PRs, final check**: the stage compares what it mined with GitHub's own count of issues and PRs
+  (search `repo:… created:>=since`, current repository name) and **fails** if more than 2% are missing, rather
+  than finishing with a silently truncated listing. One project of the first sample (`AlexEMG/DeepLabCut`,
+  renamed to `DeepLabCut/DeepLabCut`) was mined before the redirect fix and stopped at 500 of ~3,500.
 
 Review comments have no cheap count to check against and rely on the retries only.
 
@@ -290,6 +307,7 @@ first-order partial-correlation formula.
 | developer | `inactive_months_at_end` | Months between last activity and the project's last observed month |
 | developer | `abandoned` | 1 if `inactive_months_at_end ≥ ABANDON_MONTHS` |
 | developer | `long_pauses` | Pauses of ≥ `ABANDON_MONTHS` after which the developer came back |
+| developer | `active_elsewhere_after` | For leavers (≥ 2 active months, silent ≥ 6 months at the end): 1 if they contributed to other GitHub repositories in the next 12 months, 0 if not, empty if not checked |
 | developer-month | `exit` | 1 in the last active month of a developer who then abandoned |
 | developer-month | `pause_start` | 1 in an active month followed by a pause of ≥ `ABANDON_MONTHS` and a return |
 
@@ -309,8 +327,15 @@ Counting-process design, one subject per developer × project, time in calendar 
     never abandonment, however long. The threshold K (`ABANDON_MONTHS`, default 12) is needed only because
     the future is unknown: a final silence counts as abandonment only if it lasts ≥ K months before the end
     of the data; more recent exits are censored (they may still return).
+  - **Left GitHub** (disengagement): an abandonment followed by 12 months without public GitHub contributions
+    to other repositories (nor private contributions, when the user shares their count), checked by the
+    `post_exit` stage. Developers who move on to other repositories left the *project*, not open source: they
+    are censored at their exit (cause-specific hazard). Abandoners who cannot be checked (no GitHub login,
+    deleted account, or K < 6) are excluded and counted in the UI.
   - **Any long pause**: every pause of ≥ K months is an event, with or without return. A developer can have
     several (recurrent events, Andersen–Gill), so standard errors should be clustered by person.
+- **Archived repositories** are left out (GitHub's `archived` flag, `repo_info` stage): when a project is shut
+  down everyone "abandons" it, which says nothing about the developers. The API takes `exclude_archived`.
 
   Example: active until January 2020, silent for all of 2020, back in February 2021 and still active.
   Abandonment: no event, never at risk during 2020. Long pause: one event in January 2020, at risk again
@@ -328,10 +353,14 @@ Counting-process design, one subject per developer × project, time in calendar 
 - **Project decline** (controls, on by default): distinct *other* developers active in the project in the window,
   and the activity trend log((others' activity + 1) / (others' activity in the previous window + 1)). Without
   them, developers who leave a dying project are indistinguishable from individual disengagement.
-- **Responses received** (off by default), on the developer's **issues** opened in the window: share with no comment
-  or review by another human within 30 days (0 when none opened, so include *Issues + PRs opened*), and median
-  days to the first response (unanswered = 30; intervals with no issue opened are excluded). Pull requests are
-  left out: merges are not mined, and 46–61% of PRs get no comment, often because they are merged silently.
+- **Responses received** (off by default), on the developer's issues and PRs opened in the window: share with no
+  response by another human within 30 days — a comment, a review, or for a PR its merge by someone else — (0 when
+  none opened, so include *Issues + PRs opened*), and median days to the first response (unanswered = 30;
+  intervals with nothing opened are excluded). PRs count only once `pr_outcomes` has fetched their merges:
+  without them 46–61% of PRs look unanswered, mostly because they are merged without a comment.
+- **PRs rejected** (off by default): share of the developer's PRs opened in the window and *resolved before
+  month t* that were closed without merge. A merge or close after t is the future and is not used. PRs the author
+  closed themselves count as rejected: GitHub's listing does not say who closed a PR.
 - **Model**: `lifelines.CoxTimeVaryingFitter`, optionally stratified by project (separate baseline hazards),
   with log1p for counts, standardization (HR per SD) and an optional L2 penalizer.
 - **Cluster-robust standard errors** (Lin & Wei sandwich, as R's `coxph(..., cluster = id)`), clustered by

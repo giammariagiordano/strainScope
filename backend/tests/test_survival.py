@@ -112,7 +112,8 @@ from app.survival import ProjectSeries, context_covariates  # noqa: E402
 def series(tf_history=((10, {1}), (20, {2}))):
     activity = {m: {1: 1.0, 2: 2.0} for m in range(0, 12)} | {m: {1: 1.0, 3: 1.0} for m in range(12, 30)}
     issues = {1: {14: [(2.0, False), (30.0, True)], 25: [(4.0, False)]}}
-    return ProjectSeries(activity, list(tf_history) if tf_history is not None else None, issues)
+    prs = {1: {13: [(True, 13), (False, 14), (False, 15), (True, None)]}}  # (merged, month resolved)
+    return ProjectSeries(activity, list(tf_history) if tf_history is not None else None, issues, prs)
 
 
 def test_project_context_excludes_the_developer_and_is_lagged():
@@ -135,3 +136,23 @@ def test_responses_cover_issues_opened_in_the_window():
     assert c["unanswered_share"] == 0.5 and c["response_days"] == 16.0  # median of 2 and 30 (capped)
     none = context_covariates(series(), 1, t=20, window=3)  # nothing opened in months 17-19
     assert none["unanswered_share"] == 0 and np.isnan(none["response_days"])
+
+
+def test_pr_rejections_count_only_outcomes_known_before_the_interval_month():
+    assert context_covariates(series(), 1, t=15, window=3)["pr_rejected_share"] == 0.5  # resolved in 13, 14
+    assert np.isclose(context_covariates(series(), 1, t=16, window=3)["pr_rejected_share"], 2 / 3)  # + month 15
+    assert context_covariates(series(), 1, t=13, window=3)["pr_rejected_share"] == 0  # opened in 13: not in window
+
+
+def test_disengagement_counts_only_exits_without_activity_elsewhere():
+    months = np.array([0, 1, 2, 3])
+    values = {c: np.ones(4) for c in ("commits", "comments", "reviews", "centrality", "opened")}
+    values |= {"off_hours_commits": np.zeros(4), "is_core": np.zeros(4)}
+    run = lambda left: subject_rows(months, values, 0, 60, K, WINDOW, 1, "disengagement", left_github=left)  # noqa: E731
+    rows, _ = run(True)
+    assert [r["stop"] for r in rows if r["event"]] == [3]
+    rows, _ = run(False)  # moved to other repositories: censored at the exit
+    assert not any(r["event"] for r in rows) and rows[-1]["event_type"] == "moved_elsewhere"
+    assert run(None) == ([], "unknown_after_exit")
+    rows, _ = subject_rows(months, values, 0, 60, K, WINDOW, 1, "abandonment", left_github=False)
+    assert [r["stop"] for r in rows if r["event"]] == [3]  # still an abandonment of the project

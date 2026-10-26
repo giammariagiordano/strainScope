@@ -31,6 +31,7 @@ def projects_frame(db: Session, project_ids: list[int] | None) -> pd.DataFrame:
     rows = []
     for p in db.scalars(q):
         tf = db.scalar(select(ProjectMetric).where(ProjectMetric.project_id == p.id, ProjectMetric.key == "truck_factor"))
+        info = db.scalar(select(ProjectMetric.value).where(ProjectMetric.project_id == p.id, ProjectMetric.key == "repo_info")) or {}
 
         def count(model, *where, _pid=p.id):
             return db.scalar(select(func.count()).select_from(model).where(model.project_id == _pid, *where))
@@ -50,6 +51,8 @@ def projects_frame(db: Session, project_ids: list[int] | None) -> pd.DataFrame:
                 "bot_accounts": count(Developer, Developer.is_bot),
                 "truck_factor": tf.value["value"] if tf else None,
                 "truck_factor_files": tf.value["files"] if tf else None,
+                "archived": info.get("archived"),
+                "last_push": info.get("pushed_at"),
             }
         )
     return pd.DataFrame(rows)
@@ -64,7 +67,8 @@ def codebook() -> str:
         "Pseudonymized data is still personal data under the GDPR: do not attempt re-identification.",
         "",
         "## projects.csv",
-        "One row per repository: size, pipeline status and truck factor (Avelino et al., ICPC 2016).",
+        "One row per repository: size, pipeline status, truck factor (Avelino et al., ICPC 2016), and GitHub's"
+        " archived flag and last push date (`archived` projects are left out of survival_intervals.csv).",
         "",
         "## developers.csv — one row per developer × project",
         "",

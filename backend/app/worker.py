@@ -103,7 +103,7 @@ def claim() -> ProjectRef | None:
             if res.rowcount == 1:
                 p = s.get(Project, pid)
                 ensure_stage_runs(s, pid)
-                return ProjectRef(p.id, p.owner, p.name)
+                return ProjectRef(p.id, p.owner, p.name, p.since)
     return None
 
 

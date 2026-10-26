@@ -14,7 +14,8 @@ class CommitAuthorsStage(Stage):
         total = ctx.db.scalar(select(func.count()).select_from(Commit).where(Commit.project_id == pid)) or 0
         start = ctx.cursor.get("page", 0) + 1
         linked = ctx.cursor.get("linked", 0)
-        for page, items in ctx.github.paginate(f"/repos/{ctx.project.full_name}/commits", start_page=start):
+        params = {"since": ctx.project.since_iso} if ctx.project.since else None
+        for page, items in ctx.github.paginate(f"/repos/{ctx.project.full_name}/commits", params, start_page=start):
             by_sha = {it["sha"]: it.get("author") for it in items if it.get("author")}
             if by_sha:
                 rows = ctx.db.execute(
