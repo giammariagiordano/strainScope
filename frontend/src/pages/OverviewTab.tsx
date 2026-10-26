@@ -118,7 +118,7 @@ export default function OverviewTab({ projectId, ready }: { projectId: number; r
         <Card className="lg:col-span-2">
           <CardHeader
             title="Psychological climate"
-            subtitle="We-words among first-person pronouns, replies by others that thank or appreciate, negative messages (Senti4SD), anger and joy (EmoTxt); pooled over each month's human messages"
+            subtitle="We-words among first-person pronouns, replies by others that thank or appreciate, negative messages (Senti4SD), anger and joy (RoBERTa emotion model); pooled over each month's human messages"
             right={<Legend series={CLIMATE} />}
           />
           <div className="px-3 pb-4 pt-3">

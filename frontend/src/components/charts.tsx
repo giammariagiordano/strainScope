@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { fmt } from "./ui";
 
-export const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"];
+export const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)"];
 
 export interface SeriesDef {
   key: string;

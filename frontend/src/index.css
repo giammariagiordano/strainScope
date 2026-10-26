@@ -18,6 +18,8 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
+  --series-4: #7c5cd6;
+  --series-5: #c4930a;
   --status-good: #0ca30c;
   --status-warning: #c98500;
   --status-critical: #d03b3b;
@@ -51,6 +53,8 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-3: #199e70;
+    --series-4: #9a7cf0;
+    --series-5: #dcab24;
     --status-good: #0ca30c;
     --status-warning: #fab219;
     --status-critical: #e66767;
