@@ -1,0 +1,44 @@
+\documentclass[conference]{IEEEtran}
+\PassOptionsToPackage{table,xcdraw}{xcolor}
+\usepackage{xcolor}
+\usepackage[utf8]{inputenc}
+\usepackage[most]{tcolorbox}
+
+\IEEEoverridecommandlockouts
+
+\usepackage{utils}
+\usepackage{package}
+\usepackage{amsmath}
+
+\usetikzlibrary{arrows.meta,positioning,fit,calc}
+
+% Information not available yet: shown in red until the study is completed.
+\newcommand{\tbd}[1]{\textcolor{red}{#1}}
+
+\begin{document}
+
+\title{Before They Say Goodbye: Psychological Signals of Developer Disengagement in Open Source}
+
+\author{Anonymous Authors}
+
+\maketitle
+
+\begin{abstract}
+Open-source projects depend on contributors who can leave at any time, and the loss of a core developer can threaten a project's survival. Research on developer turnover has modeled \textit{who} leaves through activity and structural measures, while research on developers' affect has mined emotions from their communication. However, little is known about whether the way developers feel and relate to their community changes \textit{before} they disengage, and whether leaving a project means leaving open source. We investigate three psychological signals grounded in the Job Demands-Resources model, \ie the emotions developers express, their identification with the community, measured through the use of \textit{we} rather than \textit{I}, and the recognition they receive. We built a mining pipeline that operationalizes these signals together with established structural and workload measures, and we fine-tuned an emotion classifier on GitHub data that outperforms existing tools on a public benchmark (micro-F1 0.62 vs. 0.42). We analyze \tbd{N} developers of \tbd{N} open-source projects through event-time trajectories and survival models with time-varying covariates, distinguishing developers who move to other projects from those who leave GitHub altogether. \tbd{Results: one or two sentences summarizing RQ\textsubscript{1}--RQ\textsubscript{3}.}
+\end{abstract}
+
+\begin{IEEEkeywords}
+Developer Disengagement; Turnover; Emotions; Psycholinguistics; Survival Analysis; Mining Software Repositories.
+\end{IEEEkeywords}
+
+\input{section/intro}
+\input{section/rw}
+\input{section/method}
+\input{section/results}
+\input{section/ttv}
+\input{section/conclusion}
+
+\balance
+\bibliographystyle{IEEEtran}
+\bibliography{bib}
+\end{document}

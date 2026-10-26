@@ -1,0 +1,546 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%% Stuff for comments and text simplification %%%%
+
+%\usepackage[most]{tcolorbox}
+%\usepackage{adjustbox}
+%\usepackage[]{mdframed}
+\RequirePackage{varwidth}
+\usepackage[most]{tcolorbox}
+\usepackage{float}
+\usepackage{stfloats}
+\usepackage{listings}
+\usepackage{xspace}
+\usepackage{balance}
+\usepackage[most]{tcolorbox}
+\usepackage{colortbl}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tcolorbox}
+\tcbuselibrary{skins}
+\usepackage{enumitem}
+\usepackage{color}
+\usepackage{listings}
+\usepackage[utf8]{inputenc}
+\usepackage[utf8]{inputenc}
+\usepackage{fontawesome5}
+\usepackage{stfloats}
+\DeclareUnicodeCharacter{2009}{\,} 
+\definecolor{pblue}{rgb}{0.13,0.13,1}
+\definecolor{pgreen}{rgb}{0,0.5,0}
+\definecolor{pred}{rgb}{0.9,0,0}
+\definecolor{pgrey}{rgb}{0.46,0.45,0.48}
+\definecolor{codebackground}{rgb}{0.95, 0.95, 0.92}
+\definecolor{lightgreen}{RGB}{220,255,220}
+\definecolor{codegray}{gray}{0.9}
+
+
+\usepackage[resetlabels,labeled]{multibib}
+\newcites{A}{Primary Studies}
+
+
+\definecolor{arsenic}{rgb}{0.23, 0.27, 0.29}
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+%Template version as of 6/27/2024
+
+\newcolumntype{P}[1]{>{\centering\arraybackslash}p{#1}}
+
+\renewcommand{\arraystretch}{1.15}
+
+\usepackage{algorithmic}
+\usepackage{textcomp}
+
+\newlength{\ste@pad}
+\setlength{\ste@pad}{4pt}
+
+%\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+ %   T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+
+\definecolor{darkgreen}{rgb}{0.0, 0.5, 0.0}
+\newcommand{\quoted}[1]{``#1''}
+\newcommand{\wip}[1]{\todo[inline,color=yellow!20!white]{\textbf{WIP:} #1}}
+\newcommand{\done}[1]{\todo[inline,color=green!20!white]{\textbf{Done:} #1}}
+\newcommand{\todoi}[1]{\todo[inline]{\textbf{Todo:} #1}}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    commentstyle=\color{gray}\itshape,
+    stringstyle=\color{myred},
+    showstringspaces=false,
+    frame=single,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    breaklines=true,
+    backgroundcolor=\color{lightgray!20},
+    tabsize=4,
+    morekeywords={self}  
+}
+
+\lstset{
+  language=Python,
+  backgroundcolor=\color{gray!10}, % Light gray background
+  basicstyle=\ttfamily\small,
+  keywordstyle=\color{blue},
+  stringstyle=\color{red},
+  commentstyle=\color{green!40!black}, % Green for comments
+  morecomment=[l][\color{magenta}]{\#},
+  breaklines=true, % Automatic line breaking
+  showstringspaces=false, % Don't show spaces in strings
+  numbers=left, % Line numbers on the left
+  numberstyle=\tiny\color{gray}, % Line numbers styling
+  numbersep=10pt, % Distance of line numbers from code
+  frame=shadowbox, % Adds a shadowed frame around the code block
+  rulesepcolor=\color{gray!20}, % Shadow color
+  tabsize=2, % Default tab size
+  rulecolor=\color{black}, % Frame color
+  title=\lstname, % Show the filename of files included with \lstinputlisting;
+                  % also try caption instead of title
+  escapeinside={(*@}{@*)}, % if you want to add LaTeX within your code
+  morekeywords={*,...}, % if you want to add more keywords to the set
+  framexleftmargin=5mm, % Extend frame to include line numbers
+  xleftmargin=5mm % Indent the code block from the left margin
+}
+\NewDocumentCommand{\eg}{}{\textit{e.g.,}\@\xspace}
+\NewDocumentCommand{\ie}{}{\textit{i.e.,}\@\xspace}
+\NewDocumentCommand{\etal}{}{\textit{et al.}\@\xspace}
+
+
+\newtcolorbox{limitationsbox}{
+    enhanced,
+    colback=red!3,
+    colframe=red!60!black,
+    coltitle=white,
+    fonttitle=\bfseries,
+    title=Limitation,
+    arc=3mm,
+    boxrule=0.8pt,
+    left=2mm,
+    right=2mm,
+    top=1mm,
+    bottom=1mm,
+    drop shadow={black!20},
+}
+
+
+\definecolor{steBoxLine}{rgb}{0.0, 0.0, 0.0}
+
+\newcommand{\keyfinding}[1]{
+    \begin{tcolorbox}[fonttitle=\fontfamily{cmss},
+                      width=\textwidth,
+                      tabularx={p{0.97\textwidth}},
+                      title=\faIcon{hand-point-right}\hspace{0.4em}\textbf{Take-Away Message}]
+    #1
+    \end{tcolorbox}
+}
+
+
+\newcommand{\goal}[1]{%
+    \vspace{5pt}%
+    \noindent\fcolorbox{black}{blue!05}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{bullseye}\ Our Goal.} #1%
+        }%
+    }%
+    \vspace{5pt}%
+}%
+
+% usage: \rqanswer{Number of the Research Question}{Answer}
+\newcommand{\rqmeta}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{blue!05}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{hand-point-right}\ Answer to meta-analysis.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+
+% usage: \rqanswer{Number of the Research Question}{Answer}
+\newcommand{\rqanswer}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{blue!05}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{hand-point-right}\ Answer to RQ$_{#1}$.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+% usage: \limitation{Number of the limitation}{Text}
+\definecolor{burgundy}{RGB}{144,0,32}
+\newcommand{\limitation}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{burgundy!20}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{exclamation-circle}\ Limitation #1.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+% usage: \finding{Number of the finding}{Text}
+\newcommand{\finding}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{blue!05}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{key}\ Finding #1.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+% usage: \takeaway{Number of the takeaway message}{Text}
+\newcommand{\takeaway}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{blue!05}{%
+        \parbox{0.985\linewidth}{%
+            \textbf{\faIcon{comment}\ Take-away Message \##1.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+\newcommand{\impl}[2]{%
+    \medskip%
+    \noindent\fcolorbox{black}{impblue}{%
+        \centering\parbox{0.965\linewidth}{%
+            \textbf{\faIcon{lightbulb}\ Implication \#${#1}$.} #2%
+        }%
+    }%
+    \medskip%
+}%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Personalized comments
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Colors
+
+\definecolor{gray75}{gray}{.25}
+\definecolor{gray70}{gray}{.3}
+\definecolor{gray60}{gray}{.4}
+\definecolor{gray50}{gray}{.5}
+\definecolor{gray40}{gray}{.6}
+\definecolor{gray30}{gray}{.7}
+\definecolor{gray20}{gray}{.8}
+\definecolor{gray15}{gray}{.85}
+\definecolor{gray10}{gray}{.9}
+\definecolor{gray05}{gray}{.95}
+\definecolor{myred}{HTML}{8C3A2D}
+
+\definecolor{graytable}{gray}{.9}
+\definecolor{lightarsenic}{rgb}{0.43, 0.47, 0.49}
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Tables
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\qlist}[1]{\textbf{Q{#1}.}}
+\newcommand{\iclist}[1]{\textbf{IC{#1}.}}
+\newcommand{\eclist}[1]{\textbf{EC{#1}.}}
+\newcommand{\hplist}[1]{\textbf{Hp.{#1}.}}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% === environment rqbox (accetta un argomento: il titolo) ===
+\newenvironment{stebox1}{%
+  \par\smallskip\noindent
+  \setlength{\tabcolsep}{0pt}%
+  \begin{tabular}{@{}p{3pt}p{\dimexpr\linewidth-3pt\relax}@{}}%
+    \cellcolor{myred}\rule{0pt}{0pt} &
+    \cellcolor{gray05}%
+    \begingroup
+      \setlength{\parindent}{0pt}%
+      \hspace*{\ste@pad}%
+      \begin{minipage}[t]{\dimexpr\hsize-2\ste@pad\relax}%
+      
+      \ignorespaces
+}{%
+      \par\vspace*{\ste@pad}%
+      \end{minipage}%
+      \hspace*{\ste@pad}%
+    \endgroup
+    \\%
+  \end{tabular}%
+  \par\smallskip
+}
+
+
+%% ------------------------
+%% CUSTOM COMMANDS
+%% ------------------------
+
+\newcommand{\numberCommits}{97,636~}
+          
+\lstdefinestyle{mystyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  escapeinside={(*@}{@*)},
+  showstringspaces=false
+}
+
+\lstset{style=mystyle}
+
+
+\definecolor{codegray}{gray}{0.9}
+
+\lstdefinelanguage{JavaScript}{
+  keywords={break, case, catch, continue, debugger, default, delete, do, else, finally, for, function, if, in, instanceof, new, return, switch, this, throw, try, typeof, var, void, while, with, let, const},
+  ndkeywords={class, export, boolean, throw, implements, import, this},
+  sensitive=false,
+  comment=[l]//,
+  morecomment=[s]{/*}{*/},
+  morestring=[b]',
+  morestring=[b]"
+}
+
+\lstset{
+  backgroundcolor=\color{codegray},
+  basicstyle=\ttfamily\small,
+  frame=single,
+  language=JavaScript,
+  captionpos=b,
+  breaklines=true,
+  tabsize=2,
+  numbers=left,
+  numberstyle=\tiny,
+  keywordstyle=\color{blue},
+  commentstyle=\color{gray},
+  stringstyle=\color{teal}
+}
+
+
+\newenvironment{stebox2}{%
+  \par\smallskip\noindent
+  \setlength{\tabcolsep}{0pt}%
+  \arrayrulecolor{myred}\setlength{\arrayrulewidth}{2pt}%
+  \begin{tabular}{@{}p{\linewidth}@{}}%
+    \hline
+    \cellcolor{gray05}%
+    \begingroup
+      \setlength{\parindent}{0pt}%
+      \hspace*{\ste@pad}%
+      \begin{minipage}[t]{\dimexpr\hsize-2\ste@pad\relax}%
+      
+      \ignorespaces
+}{%
+      \par\vspace*{\ste@pad}%
+      \end{minipage}%
+      \hspace*{\ste@pad}%
+    \endgroup
+    \\%
+    \hline
+  \end{tabular}%
+  \arrayrulecolor{black}\setlength{\arrayrulewidth}{0.4pt}%
+  \par\smallskip
+}
+
+\newcommand{\replicationbox}[1]{%
+  \begin{stebox2}#1\end{stebox2}%
+}
+
+
+\usepackage{mdframed}
+\definecolor{babyblue}{rgb}{0.54, 0.81, 0.94}
+
+\usepackage{url}
+\usepackage{comment}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Goal & RQ box
+
+\usepackage{graphicx}
+
+\usepackage{tcolorbox}
+
+
+% usage: \rqbox{Numero della Research Question}{Domanda}
+\newcommand{\rqbox}[2]{%
+	\medskip%
+	\noindent\fcolorbox{black}{gray!05}{%
+		\parbox{0.985\linewidth}{% 
+			\textbf{\faSearch\ RQ$_{#1}$.} \emph{#2} %
+		}%
+	}%
+	\medskip%
+}%
+
+% usage: \rqanswer{Numero della Research Question}{Risposta}
+
+
+
+% usage: \stepOutput{Numero di output}{Testo}
+\newcommand{\stepOutput}[2]{ %
+	\medskip%
+	\noindent\fcolorbox{purple}{purple!05}{%
+		\parbox{0.985\linewidth}{% 
+			\textbf{\faKey\ Output of Step #1.} #2 %
+		}%
+	}%
+	\medskip%
+}%
+
+% usage: \finding{Numero del contribution}{Testo}
+\newcommand{\contribution}[2]{ %
+	\medskip%
+	\noindent\fcolorbox{black}{gray!05}{%
+		\parbox{0.985\linewidth}{% 
+			\textbf{\faComment\ Contribution \##1.} #2 %
+		}%
+	}%
+	\medskip%
+}%
+
+% usage: \finding{Numero del takeaway message}{Testo}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Commenti personalizzati
+
+% usage: \notabene{sigla}{Testo}{colore}
+\newcommand{\notabene}[3]{
+	\fbox{\bfseries\sffamily\scriptsize\color{#3}#1}
+	{\sf\small$\blacktriangleright${\color{#3}\textit{\textbf{#2}}}$\blacktriangleleft$}
+}
+
+
+\newcommand{\needcite}{\textcolor{red}{Citazione necessaria}}
+
+\newcommand{\revised}[1]{\textcolor{black}{#1}}
+
+\newcommand{\feedback}[1]{\textcolor{red}{#1}}
+
+% Tabelle
+
+
+\mdfdefinestyle{stebox5}{%
+linecolor=purple,
+linewidth=3pt,%
+leftmargin=0cm,rightmargin=0cm,%
+roundcorner=5pt,
+topline=false,bottomline=false,rightline=true,leftline=true,%
+backgroundcolor=purple!10
+}
+
+\newcommand{\steResearchQuestionBox}[1]
+{   
+    \medskip
+    \begin{mdframed}[style=stebox5]
+    {#1}
+    \end{mdframed}
+    \medskip
+}
+
+
+
+\newtcolorbox{myresults}[2][]{enhanced,
+before skip=2mm,after skip=2mm, colback=black!5,colframe=black!50,boxrule=0.2mm,
+attach boxed title to top left={xshift=1cm,yshift*=1mm-\tcboxedtitleheight}, varwidth boxed title*=-3cm,
+boxed title style={frame code={
+            \path[fill=tcbcolback!30!black]
+              ([yshift=-1mm,xshift=-1mm]frame.north west)
+                arc[start angle=0,end angle=180,radius=1mm]
+              ([yshift=-1mm,xshift=1mm]frame.north east)
+                arc[start angle=180,end angle=0,radius=1mm];
+            \path[left color=tcbcolback!60!black,right color=tcbcolback!60!black,
+              middle color=tcbcolback!80!black]
+              ([xshift=-2mm]frame.north west) -- ([xshift=2mm]frame.north east)
+              [rounded corners=1mm]-- ([xshift=1mm,yshift=-1mm]frame.north east)
+              -- (frame.south east) -- (frame.south west)
+              -- ([xshift=-1mm,yshift=-1mm]frame.north west)
+              [sharp corners]-- cycle;
+            },interior engine=empty,
+          },
+          fonttitle=\bfseries,
+          title={#2},#1}
+
+          
+\lstdefinestyle{mystyle}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  escapeinside={(*@}{@*)},
+  showstringspaces=false
+}
+
+\lstset{style=mystyle}
+
+\newcommand{\hypothesiscard}[4]{%
+  \begin{tcolorbox}[
+    colframe=arsenic,
+    colback=gray05,
+    boxrule=0.5pt,
+    leftrule=3.5pt,
+    arc=2mm,
+    top=6pt, bottom=6pt, left=8pt, right=8pt,
+    before skip=6pt, after skip=6pt
+  ]
+    % Header
+    \noindent
+    \small\textbf{\color{arsenic}\faIcon{flask}\ Hypothesis #1} 
+    \hfill 
+    \begingroup\color{arsenic!80!black}\faIcon{project-diagram}\ \textit{\footnotesize #2}\endgroup
+    
+    \vspace{3pt}{\color{gray20}\rule{\linewidth}{0.4pt}}\vspace{3pt}
+    
+    % Body: H0 vs Ha
+    \small
+    \noindent\textcolor{red!70!black}{\textbf{\textsf{[H\textsubscript{0,#1}]}}} #3\\[3pt]
+    \noindent\textcolor{blue!80!black}{\textbf{\textsf{[H\textsubscript{a,#1}]}}} #4
+  \end{tcolorbox}%
+}
+
+
+
+\definecolor{rqbg}      {HTML}{F0F4FF}
+\definecolor{rqborder}  {HTML}{3A5FCD}
+\definecolor{subrqbg}   {HTML}{F5F5F5}
+\definecolor{subrqborder}{HTML}{7A7A7A}
+\definecolor{answerbg}  {HTML}{F0FFF4}
+\definecolor{answerborder}{HTML}{2E8B57}
+
+\newtcolorbox{answerbox}[1]{
+  rqcommon,
+  colback=answerbg,
+  colframe=answerborder,
+  coltitle=answerborder,
+  title={Hypothesis H$_{#1}$ Summary},
+  label={ans:#1}
+}
+
+\tcbset{
+  rqcommon/.style={
+    enhanced,
+    arc=0pt,
+    boxrule=0pt,           % nessun bordo tutto intorno
+    leftrule=3pt,          % solo bordo sinistro
+    toprule=0pt, bottomrule=0pt, rightrule=0pt,
+    left=6pt, right=4pt,
+    top=3pt, bottom=3pt,
+    toptitle=2pt, bottomtitle=2pt,
+    fonttitle=\small\bfseries,
+    attach boxed title to top left={yshift=-1pt, xshift=4pt},
+    boxed title style={
+      sharp corners,
+      boxrule=0pt,
+      colback=white,        % titolo su sfondo bianco → sempre leggibile
+      top=1pt, bottom=1pt,
+      left=2pt, right=2pt,
+    },
+  }
+}

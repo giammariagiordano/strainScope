@@ -1,0 +1,178 @@
+\section{Research Method}
+\label{sec:method}
+
+The \textit{goal} of our empirical study is to investigate whether psychological signals in developers' communication anticipate their disengagement from open-source projects, with the \textit{purpose} of understanding the psychological side of turnover and whether it can be recognized before developers leave. The \textit{quality focus} is on emotions, belonging, and received recognition, and on their association with disengagement beyond structural and workload factors. The \textit{perspective} is of both researchers, interested in the antecedents of disengagement, and maintainers, interested in retaining contributors. Based on our goal, we formulated three research questions.
+
+First, if disengagement is the outcome of strain that is not balanced by resources, the psychological signals should change \textit{before} developers leave, and differently from developers who stay. Hence, we asked:
+
+\sterqbox{RQ\textsubscript{1}. On the Trajectories of Psychological Signals.}{How do the emotions, the belonging, and the recognition of developers evolve in the months before they disengage, compared with developers who stay?}
+
+A change in the signals may simply mirror a change in activity or role, which turnover research already captures. Hence, we asked:
+
+\sterqbox{RQ\textsubscript{2}. On the Association with Disengagement.}{To what extent are psychological signals associated with the risk of disengagement beyond structural role, workload, and project context?}
+
+Finally, a developer who stops contributing to a project may move to another one rather than leave open source. If the signals reflect strain rather than a change of interest, they should be more strongly associated with leaving GitHub than with moving elsewhere. Hence, we asked:
+
+\sterqbox{RQ\textsubscript{3}. On Leaving the Project or Leaving Open Source.}{Are psychological signals associated differently with leaving GitHub altogether and with moving to other projects?}
+
+Figure~\ref{fig:method} overviews the research method, which follows the ``Repository Mining'' ACM/SIGSOFT Empirical Standard.\footnote{\url{https://github.com/acmsigsoft/EmpiricalStandards}}
+
+\begin{figure*}[t]
+\centering
+\begin{tikzpicture}[
+  font=\scriptsize,
+  stp/.style={draw=arsenic, rounded corners=2pt, fill=gray05, align=center, minimum height=0.95cm, text width=2.35cm, inner sep=2pt},
+  rq/.style={draw=arsenic, rounded corners=2pt, fill=arsenic, text=white, align=center, minimum height=0.95cm, text width=2.3cm, inner sep=2pt},
+  arr/.style={-{Latex[length=1.8mm]}, thick, arsenic},
+  lane/.style={font=\scriptsize\bfseries, anchor=west, text=arsenic}
+]
+\node[lane] at (-1.45,0.75) {Data collection};
+\node[stp] (d1) at (0,0) {\textbf{Project selection}\\\tbd{N} projects};
+\node[stp] (d2) at (2.75,0) {\textbf{Mining}\\git history, GitHub API since \tbd{date}};
+\node[stp] (d3) at (5.5,0) {\textbf{Identities}\\alias merging, bot removal, pseudonyms};
+\node[stp] (d4) at (8.25,0) {\textbf{Developer-months}\\\tbd{N} developers, \tbd{N} months};
+\draw[arr] (d1) -- (d2); \draw[arr] (d2) -- (d3); \draw[arr] (d3) -- (d4);
+
+\node[lane] at (-1.45,-0.95) {Measurement};
+\node[stp] (m1) at (0,-1.7) {\textbf{Structural \& workload}\\core, truck factor, activity, off-hours};
+\node[stp] (m2) at (2.75,-1.7) {\textbf{Emotions}\\RoBERTa on GitHub gold standards};
+\node[stp] (m3) at (5.5,-1.7) {\textbf{Belonging \& recognition}\\we-talk, gratitude, reactions};
+\node[stp] (m4) at (8.25,-1.7) {\textbf{Disengagement}\\abandonment; active elsewhere?};
+\draw[arr] (d4.south) -- ++(0,-0.25) -| (m1.north);
+\draw[arr] (d4.south) -- ++(0,-0.25) -| (m2.north);
+\draw[arr] (d4.south) -- ++(0,-0.25) -| (m3.north);
+\draw[arr] (d4.south) -- (m4.north);
+
+\node[rq] (r1) at (11.6,0.15) {\textbf{RQ\textsubscript{1}}\\event-time trajectories};
+\node[rq] (r2) at (11.6,-0.95) {\textbf{RQ\textsubscript{2}}\\Cox, time-varying};
+\node[rq] (r3) at (11.6,-2.05) {\textbf{RQ\textsubscript{3}}\\cause-specific hazards};
+\draw[arr] (m4.east) -- ++(0.55,0) |- (r1.west);
+\draw[arr] (m4.east) -- ++(0.55,0) |- (r2.west);
+\draw[arr] (m4.east) -- ++(0.55,0) |- (r3.west);
+\end{tikzpicture}
+\caption{Overview of the Research Method.}
+\label{fig:method}
+\end{figure*}
+
+\subsection{Dataset Selection}
+\label{subsec:dataset}
+
+\tbd{[Placeholder: source and selection criteria of the projects, \eg list provided by the authors, minimum number of contributors, activity in the observation period, exclusion of archived repositories and of mirror projects developed outside GitHub, \ie with a share of pull requests merged on GitHub below X\%.]} We mined the complete git history of each project and the GitHub data, \ie issues, pull requests, comments, reviews, and reactions, created from \tbd{[date]} onward. Table~\ref{tab:dataset} reports the descriptive statistics of the resulting dataset.
+
+\begin{table}[t]
+\centering
+\caption{Descriptive Statistics of the \tbd{N} Projects.}
+\label{tab:dataset}
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabularx}{\columnwidth}{l*{5}{>{\raggedleft\arraybackslash}X}}
+\toprule
+\rowcolor{arsenic}
+\textcolor{white}{\textbf{Metric}} & \textcolor{white}{\textbf{Min}} & \textcolor{white}{\textbf{Q1}} & \textcolor{white}{\textbf{Median}} & \textcolor{white}{\textbf{Q3}} & \textcolor{white}{\textbf{Max}} \\
+\midrule
+Commits & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+\rowcolor{gray!8}
+Issues and PRs & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+Comments and reviews & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+\rowcolor{gray!8}
+Developers (humans) & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+Developers with $\geq$ 2 active months & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+\rowcolor{gray!8}
+Observed months & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} & \tbd{--} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Data Extraction}
+\label{subsec:extraction}
+
+Our mining pipeline, available in the replication package~\cite{replication}, reads the commits from a clone of each repository and collects issues, pull requests, comments, reactions, reviews, and pull-request outcomes through the GitHub REST and GraphQL APIs. Since GitHub's listing endpoints occasionally return truncated pages, every issue number missing from the listing is fetched individually, and the stage fails if more than 2\% of the items counted by GitHub are missing. Afterward, we flagged bot accounts through their GitHub type, the \texttt{[bot]} suffix, and a list of known bots, and we merged the aliases of each developer, \ie git identities and GitHub logins, into a single pseudonymous identity. Finally, we aggregated all measures per developer and month, considering a month as \textit{active} if the developer authored at least one commit, issue, pull request, comment, or review.
+
+\subsection{Operationalization}
+\label{subsec:measures}
+
+Table~\ref{tab:measures} summarizes the measures, grouped by the role they play in the analyses.
+
+\begin{table}[t]
+\centering
+\scriptsize
+\caption{Measures Computed per Developer and Month.}
+\label{tab:measures}
+\setlength{\tabcolsep}{2.5pt}
+\renewcommand{\arraystretch}{1.02}
+\begin{tabularx}{\columnwidth}{>{\raggedright\arraybackslash}p{2.05cm} >{\raggedright\arraybackslash}X}
+\toprule
+\rowcolor{arsenic}
+\textcolor{white}{\textbf{Measure}} & \textcolor{white}{\textbf{Operationalization}} \\
+\midrule
+\multicolumn{2}{l}{\textit{Structural role and workload}}\\
+Core developer & Top 80\% of cumulative eigenvector centrality in the collaboration network, 3-month window~\cite{joblin2017classifying} \\
+Truck-factor member & Member of the truck factor computed on the commits up to the previous month~\cite{avelino2016novel} \\
+Activity & Commits, comments, reviews, issues and pull requests opened \\
+Off-hours share & Commits on weekends or outside working hours, author's time zone~\cite{claes2018programmers} \\
+Experience & Active months before the current one \\
+\midrule
+\multicolumn{2}{l}{\textit{Project context}}\\
+Other active developers & Distinct other developers active in the window \\
+Activity trend & Others' activity in the window \textit{vs.} the previous one \\
+AI-assisted PRs & Share of pull requests opened by AI agents or crediting an AI tool \\
+\midrule
+\multicolumn{2}{l}{\textit{Psychological signals}}\\
+Emotions & Share of messages expressing anger, joy, love, sadness, fear, surprise (Section~\ref{subsec:emotions}) \\
+Negativity & Share of messages with negative polarity, Senti4SD retrained on GitHub~\cite{calefato2018sentiment,novielli2020can} \\
+Belonging & Share of first-person pronouns that are plural, \ie \textit{we} over \textit{we} and \textit{I}~\cite{tausczik2010psychological} \\
+Gratitude received & Replies by other people to the developer's issues and pull requests that thank or appreciate \\
+Reactions received & Positive reactions (\faThumbsUp, \faHeart, \faGrinStars, \faRocket) to the developer's items \\
+\midrule
+\multicolumn{2}{l}{\textit{Disengagement}}\\
+Abandonment & No activity for $\geq$ 12 months before the end of observation \\
+Left GitHub & Abandonment without public contributions elsewhere in the next 12 months \\
+Moved elsewhere & Abandonment with contributions to other repositories in the next 12 months \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{Structural Role, Workload, and Context.} We reused the measures of turnover research, so that the psychological signals are assessed \textit{beyond} them. The developer network links developers who co-edit files or comment on the same issues~\cite{joblin2017classifying}. Differently from previous work, which measures the truck factor on the last snapshot~\cite{avelino2016novel}, we recomputed it every month on the commits made up to then, so that it never relies on future information. Since developers may leave because the project itself declines, we also measured the activity of the other developers. Finally, as AI coding agents are changing how contributions arrive, we measured the share of pull requests opened by agent accounts, \eg the Copilot coding agent, or crediting an AI tool.
+
+\textbf{Emotions.}
+\label{subsec:emotions}
+We classified every message, \ie issue and pull-request descriptions, comments, and reviews, according to the six basic emotions of Shaver \etal~\cite{shaver1987emotion}, after removing quoted replies, code blocks, and mentions, so that each message only contains its author's words. Since emotion classifiers lose accuracy across platforms~\cite{novielli2020can,imran2022data}, we compared two approaches on the public GitHub benchmark of Imran \etal~\cite{imran2022data}, \ie 2,000 issue and pull-request comments annotated with the same emotions ($\kappa > 0.8$), using its official 1,600/400 split. First, we retrained EmoTxt~\cite{calefato2017emotxt}; to do so, we reimplemented its feature extraction and verified that it produces values identical to the original tool. Second, we fine-tuned RoBERTa-base~\cite{liu2019roberta} with a multi-label head on the Stack Overflow gold standard of Novielli \etal~\cite{novielli2018gold}, on the GitHub training set, and on four augmented variants of each GitHub comment released by Imran \etal~\cite{imran2022data}. We chose the decision threshold of each emotion on out-of-fold predictions, \ie through a 5-fold cross-validation on the 1,600 training comments in which the variants of a comment never leave its fold, and we then trained the final model on all the training data, leaving the test set unseen. As a further check on natural GitHub comments, we mapped the predicted emotions to polarity (love and joy as positive; anger, sadness, and fear as negative) and compared them with the 7,122 manually labeled comments of Novielli \etal~\cite{novielli2020can}, which were annotated with the same emotions and mapped to polarity in the same way. Table~\ref{tab:emotions} shows that RoBERTa outperforms all alternatives. The ensemble of the five fold models is slightly more accurate than the final model, but five times slower; we therefore adopted the final model. Following Shaver \etal~\cite{shaver1987emotion}, whose anger category also includes irritation and exasperation, the classifier labels as anger also mild frustration, \eg ``same problem here, really need this''.
+
+\begin{table}[t]
+\centering
+\caption{Emotion Classifiers on GitHub: F1 on the Test Set of Imran \etal~\cite{imran2022data} and Macro-F1 of the Derived Polarity on 7,122 Comments~\cite{novielli2020can}.}
+\label{tab:emotions}
+\setlength{\tabcolsep}{3pt}
+\scriptsize
+\begin{tabularx}{\columnwidth}{>{\raggedright\arraybackslash}X r r r r}
+\toprule
+\rowcolor{arsenic}
+\textcolor{white}{\textbf{Classifier (training data)}} & \textcolor{white}{\textbf{Anger}} & \textcolor{white}{\textbf{Joy}} & \textcolor{white}{\textbf{Micro-F1}} & \textcolor{white}{\textbf{Polarity}} \\
+\midrule
+EMTk, as reported in~\cite{imran2022data} & 0.20 & 0.29 & 0.42 & -- \\
+\rowcolor{gray!8}
+EmoTxt (Stack Overflow) & 0.22 & 0.12 & 0.28 & 0.59 \\
+EmoTxt (Stack Overflow + GitHub) & 0.39 & 0.41 & 0.49 & 0.62 \\
+\rowcolor{gray!8}
+RoBERTa, validation split & 0.52 & 0.58 & 0.60 & 0.75 \\
+RoBERTa, 5-fold ensemble, augmented & 0.57 & 0.67 & 0.63 & 0.75 \\
+\rowcolor{gray!8}
+\textbf{RoBERTa, final model, augmented} & \textbf{0.55} & \textbf{0.65} & \textbf{0.62} & \textbf{0.76} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{Belonging and Recognition.} We measured belonging as the share of first-person plural pronouns (\eg \textit{we}, \textit{our}, \textit{let's}) among all first-person pronouns in the developer's messages, a marker of group identification in psycholinguistics~\cite{tausczik2010psychological}. We measured recognition in two ways. First, the \textit{gratitude received}, \ie the replies by other people to the developer's issues and pull requests that thank or appreciate the work (\eg ``thanks'', ``great work'', ``nice catch''); we excluded bots, which thank contributors automatically. Second, the positive \textit{reactions} that other users added to the developer's issues, pull requests, and comments. Both dictionaries are documented in our replication package~\cite{replication}.
+
+\textbf{Disengagement.} Following previous work~\cite{calefato2022will,lin2017developer}, we considered a developer as having \textit{abandoned} a project when no activity is recorded for at least 12 months before the end of observation; more recent silences are right-censored, since the developer may still return. For each developer who abandoned a project, we queried the GitHub contributions of the following 12 months and excluded those to the project itself. We labeled the developer as \textit{moved elsewhere} when public contributions to other repositories exist, and as having \textit{left GitHub} otherwise.
+
+\subsection{Data Analysis}
+\label{subsec:analysis}
+
+\textbf{RQ\textsubscript{1}: Trajectories.} We aligned the history of each developer who abandoned a project on their last active month and computed the psychological signals for each of the preceding \tbd{12} months. To separate the changes that precede disengagement from those due to tenure, we matched each leaver with up to two developers of the same project who, at a month with similar experience, had not left, \ie were active again within the following 12 months; this month is their pseudo-exit. We then fitted a linear mixed-effects model for each signal, with the 3-month bins before the (pseudo-)exit, the group, and their interaction as fixed effects, the number of messages and the project as controls, and a random intercept per developer, correcting the p-values across signals through the Benjamini-Hochberg procedure. The interaction tests whether the signals of leavers diverge from those of stayers as the exit approaches.
+
+\textbf{RQ\textsubscript{2}: Association with Disengagement.} We fitted Cox proportional hazards models~\cite{cox1972regression} with time-varying covariates in a counting-process design, \ie one subject per developer and project, with time measured in months since entry. Only active months are at risk, since a developer who is already silent cannot start leaving. To avoid immortal-time bias, developers enter the risk set after their \tbd{second} active month rather than being filtered on their total activity. All covariates of month $t$ summarize the months from $t-3$ to $t-1$, so that the activity marking the exit month never enters its own covariates. We stratified the models by project, allowing separate baseline hazards, log-transformed and standardized the counts, and computed cluster-robust standard errors~\cite{lin1989robust} by person, since the same developer may contribute to several projects. We compared a \textit{base model}, with structural, workload, and context covariates, with a \textit{full model} that adds the psychological signals, through a likelihood-ratio test and the concordance index. We checked the proportional hazards assumption through scaled Schoenfeld residuals~\cite{grambsch1994proportional} and the number of events per covariate.
+
+\textbf{RQ\textsubscript{3}: Leaving the Project or Leaving Open Source.} We fitted two cause-specific Cox models with the same covariates as the full model of RQ\textsubscript{2}. In the first, the event is \textit{leaving GitHub}, and developers who moved elsewhere are censored at their exit; in the second, the event is \textit{moving elsewhere}, and developers who left GitHub are censored. Comparing the hazard ratios of the psychological signals across the two models tells whether they are specific to leaving open source. Developers whose later activity could not be checked, \eg deleted accounts, were excluded from both models.
+
+\textbf{Ethical Considerations.} The study relies on public data and reports only aggregate results. Psychological signals are not diagnostic of any individual: we never label, report, or release the inferred state of an identifiable developer, and all identities in our replication package are pseudonymized. Following Tulili \etal~\cite{tulili2023burnout}, we stress that such signals must not be used for surveillance or personnel decisions.
