@@ -59,7 +59,9 @@ COVARIATES = [
     Covariate("toxic_received", "Toxic messages received", "Toxic messages by others on the developer's issues/PRs in the window (ToxiCR).", count=True, default=False),
     Covariate("negative_emitted_share", "Negativity emitted", "Share of the window's messages with negative polarity (Senti4SD); 0 without messages.", default=False),
     Covariate("negative_received", "Negative messages received", "Negative messages by others on the developer's issues/PRs in the window (Senti4SD).", count=True, default=False),
-    Covariate("we_share", "Belonging (we-talk)", "Share of first-person pronouns in the window's messages that are plural (we, our, let's). Undefined without pronouns: the interval is excluded.", default=False),
+    Covariate("we_share", "Belonging (we-talk), window", "Share of first-person pronouns in the window's messages that are plural (we, our, let's). Undefined without pronouns: the interval is excluded (most months have none; prefer the 12-month version).", default=False),
+    Covariate("we_share_12m", "Belonging (we-talk), 12 months", "As Belonging, pooled over the previous 12 months (lagged). Without any pronoun in those months it is set to the mean of the defined values and flagged by Belonging unknown, so no interval is excluded (missing-indicator method).", default=False),
+    Covariate("we_unknown", "Belonging unknown", "1 if no first-person pronoun was written in the previous 12 months (Belonging, 12 months, then holds the mean). Include it with Belonging, 12 months.", default=False),
     Covariate("thanks_emitted_share", "Gratitude expressed", "Share of the window's messages that thank or appreciate someone; 0 without messages.", default=False),
     Covariate("thanks_received", "Gratitude received", "Messages by other people on the developer's issues/PRs in the window that thank or appreciate.", count=True, default=False),
     Covariate("anger_share", "Anger expressed", "Share of the window's messages expressing anger (EmoTxt); 0 without messages.", default=False),
@@ -180,6 +182,7 @@ def context_covariates(series: ProjectSeries | None, did: int, t: int, window: i
     }
 
 
+LONG_WINDOW = 12  # months pooled by the 12-month belonging covariate
 PSYCH_WINDOW = ("psych_messages", "we_words", "i_words", "thanks_emitted", "thanks_received", "reactions_pos_received",
                 "emotion_messages", "anger_emitted", "joy_emitted", "sadness_emitted", "anger_received")
 
@@ -245,6 +248,8 @@ def subject_rows(
     w_active = _rolling(active, window, "sum")
     w_core = _rolling(dense["is_core"], window, "max")
     w_cent = _rolling(dense["centrality"], window, "max")
+    we_long = _rolling(dense["we_words"], LONG_WINDOW, "sum")
+    i_long = _rolling(dense["i_words"], LONG_WINDOW, "sum")
     cum_active = np.concatenate([[0], np.cumsum(active)[:-1]])
 
     rows, episode = [], 0
@@ -293,6 +298,8 @@ def subject_rows(
                 "negative_received": w["negative_received"][i],
                 "toxic_threads": w["toxic_threads"][i],
                 "we_share": _share(w["we_words"][i], w["we_words"][i] + w["i_words"][i]) if w["we_words"][i] + w["i_words"][i] else np.nan,
+                "we_share_12m": we_long[i] / (we_long[i] + i_long[i]) if we_long[i] + i_long[i] else np.nan,  # filled below
+                "we_unknown": np.nan if np.isnan(we_long[i] + i_long[i]) else float(not we_long[i] + i_long[i]),
                 "thanks_emitted_share": _share(w["thanks_emitted"][i], w["psych_messages"][i]),
                 "thanks_received": w["thanks_received"][i],
                 "reactions_pos_received": w["reactions_pos_received"][i],
@@ -428,7 +435,13 @@ def build_intervals(
         stats["breaks_with_return"] += sum(r["event_type"] == "break_return" for r in sub)
         stats["abandonments"] += sum(r["event_type"] == "abandonment" for r in sub)
         stats["moved_elsewhere"] += sum(r["event_type"] == "moved_elsewhere" for r in sub)
-    return pd.DataFrame(rows, columns=columns), stats
+    out = pd.DataFrame(rows, columns=columns)
+    # Missing-indicator method for the 12-month belonging: undefined values take the mean of the defined ones, and
+    # `we_unknown` tells the model they are unknown (only when the dictionary counts exist at all).
+    measured = out["we_unknown"].notna()
+    if measured.any():
+        out.loc[measured, "we_share_12m"] = out.loc[measured, "we_share_12m"].fillna(out["we_share_12m"].mean())
+    return out, stats
 
 
 def fit_cox(

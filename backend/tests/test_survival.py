@@ -174,3 +174,19 @@ def test_event_time_bins_group_three_months_up_to_the_anchor():
     import pandas as pd
     rel = pd.Series([0, -1, -2, -3, -5, -6, -11])
     assert (-((-rel) // 3) * 3).tolist() == [0, 0, 0, -3, -3, -6, -9]
+
+
+def test_belonging_over_twelve_months_is_lagged_and_flags_unknown():
+    months = np.arange(0, 20)
+    n = len(months)
+    values = {c: np.ones(n) for c in ("commits", "comments", "reviews", "centrality", "opened")}
+    values |= {"off_hours_commits": np.zeros(n), "is_core": np.zeros(n)}
+    we, i = np.zeros(n), np.zeros(n)
+    we[1], i[1] = 3, 1  # pronouns only in month 1
+    values |= {"we_words": we, "i_words": i, "psych_messages": np.ones(n)}
+    rows, _ = subject_rows(months, values, 0, 60, K, WINDOW, 1, "abandonment")
+    by_month = {r["stop"]: r for r in rows}  # stop = month since entry (entry = month 0)
+    assert np.isnan(by_month[1]["we_share_12m"]) and by_month[1]["we_unknown"] == 1  # month 1 itself is not lagged in
+    assert by_month[2]["we_share_12m"] == 0.75 and by_month[2]["we_unknown"] == 0
+    assert by_month[13]["we_share_12m"] == 0.75  # months 1..12 still include month 1
+    assert by_month[14]["we_unknown"] == 1  # 12 months later it has left the window

@@ -392,6 +392,10 @@ Counting-process design, one subject per developer × project, time in calendar 
   none opened, so include *Issues + PRs opened*), and median days to the first response (unanswered = 30;
   intervals with nothing opened are excluded). PRs count only once `pr_outcomes` has fetched their merges:
   without them 46–61% of PRs look unanswered, mostly because they are merged without a comment.
+- **Belonging** (off by default): the 3-month we-share is undefined in most months (no first-person pronoun), which
+  would drop those intervals; *Belonging, 12 months* pools the previous 12 months and, when still undefined, takes the
+  mean of the defined values together with the indicator *Belonging unknown* (missing-indicator method), so no
+  interval is excluded. Use the two together.
 - **PRs rejected** (off by default): share of the developer's PRs opened in the window and *resolved before
   month t* that were closed without merge. A merge or close after t is the future and is not used. PRs the author
   closed themselves count as rejected: GitHub's listing does not say who closed a PR.
