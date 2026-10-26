@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import Developer, DeveloperMonth, Project
+from .models import Developer, DeveloperMonth, Issue, Project
 
 LEVELS = ("developer", "developer_month")
 
@@ -38,6 +38,8 @@ DEVELOPER_MONTH_VARS = [
     Variable("toxic_received_share", "Toxicity received", "Share of messages written by others on the developer's issues/PRs that ToxiCR classifies as toxic.", "share"),
     Variable("negative_emitted_share", "Negativity emitted", "Share of the month's messages with negative polarity (Senti4SD).", "share"),
     Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity (Senti4SD).", "share"),
+    Variable("toxic_thread_share", "Toxic conversations joined", "Share of the conversations the developer wrote in this month that are toxic (conversation classifier, docs/TOXICITY.md).", "share"),
+    Variable("community_toxicity", "Community toxicity", "Share of the project's conversations opened this month that are toxic (same for every developer of the project).", "share"),
     Variable("pause_start", "Long pause starts", "1 if this month is followed by at least the threshold of inactivity and the developer later returns.", "binary"),
     Variable("exit", "Exit month", "1 if this is the developer's last active month and they then stay inactive for at least the abandonment threshold before the end of observation.", "binary"),
 ]  # fmt: skip
@@ -64,6 +66,8 @@ DEVELOPER_VARS = [
     Variable("toxic_received_share", "Toxicity received", "Share of messages by others on the developer's issues/PRs classified as toxic.", "share"),
     Variable("negative_emitted_share", "Negativity emitted", "Share of all messages with negative polarity (Senti4SD).", "share"),
     Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity.", "share"),
+    Variable("toxic_thread_share", "Toxic conversations joined", "Share of all conversations the developer wrote in that are toxic.", "share"),
+    Variable("community_toxicity", "Community toxicity", "Share of all the project's conversations that are toxic (project-level).", "share"),
     Variable("long_pauses", "Long pauses", "Pauses of at least the threshold after which the developer came back."),
     Variable("abandoned", "Abandoned", "1 if the developer has been inactive for at least the abandonment threshold at the end of observation. Right-censored: recent leavers count as 0.", "binary"),
 ]  # fmt: skip
@@ -75,6 +79,22 @@ def _month_diff(a: str, b: str) -> int:
     ya, ma = map(int, a.split("-"))
     yb, mb = map(int, b.split("-"))
     return (yb * 12 + mb) - (ya * 12 + ma)
+
+
+def community_toxicity(db: Session, project_ids: list[int], by_month: bool = True) -> dict:
+    """Share of classified conversations that are toxic, per (project, month opened) or per project.
+    Projects without classified conversations are absent (not measured)."""
+    rows = db.execute(
+        select(Issue.project_id, Issue.created_at, Issue.conv_toxic)
+        .where(Issue.project_id.in_(project_ids), Issue.conv_toxic.in_([0, 1]))
+    ).all()
+    if not rows:
+        return {}
+    d = pd.DataFrame(rows, columns=["project_id", "created_at", "toxic"])
+    if by_month:
+        d["month"] = d["created_at"].map(lambda t: f"{t.year:04d}-{t.month:02d}")
+        return d.groupby(["project_id", "month"])["toxic"].mean().to_dict()
+    return d.groupby("project_id")["toxic"].mean().to_dict()
 
 
 def developer_month_frame(
@@ -92,6 +112,7 @@ def developer_month_frame(
             DeveloperMonth.reviews, DeveloperMonth.centrality, DeveloperMonth.degree, DeveloperMonth.is_core,
             DeveloperMonth.messages, DeveloperMonth.toxic_emitted, DeveloperMonth.received,
             DeveloperMonth.toxic_received, DeveloperMonth.negative_emitted, DeveloperMonth.negative_received,
+            DeveloperMonth.threads, DeveloperMonth.toxic_threads,
         )
         .join(Developer, Developer.id == DeveloperMonth.developer_id)
         .join(Project, Project.id == DeveloperMonth.project_id)
@@ -110,12 +131,16 @@ def developer_month_frame(
     df["off_hours_share"] = df["off_hours_commits"] / commits
     df["weekend_share"] = df["weekend_commits"] / commits
     df["is_core"] = df["is_core"].astype(int)
-    strain = ["messages", "toxic_emitted", "received", "toxic_received", "negative_emitted", "negative_received"]
+    strain = ["messages", "toxic_emitted", "received", "toxic_received", "negative_emitted", "negative_received",
+              "threads", "toxic_threads"]  # fmt: skip
     df[strain] = df[strain].astype(float)  # None (not measured) -> NaN
     df["toxic_emitted_share"] = df["toxic_emitted"] / df["messages"].replace(0, np.nan)
     df["toxic_received_share"] = df["toxic_received"] / df["received"].replace(0, np.nan)
     df["negative_emitted_share"] = df["negative_emitted"] / df["messages"].replace(0, np.nan)
     df["negative_received_share"] = df["negative_received"] / df["received"].replace(0, np.nan)
+    df["toxic_thread_share"] = df["toxic_threads"] / df["threads"].replace(0, np.nan)
+    climate = community_toxicity(db, df["project_id"].unique().tolist())
+    df["community_toxicity"] = [climate.get((p, m), np.nan) for p, m in zip(df["project_id"], df["month"])]
     df["truck_factor_member"] = df["truck_factor_member"].astype(int)
     # Abandonment: inactivity gap between a developer's last month and the project's last observed month.
     project_end = df.groupby("project_id")["month"].transform("max")
@@ -130,7 +155,8 @@ def developer_month_frame(
     return df[
         ["project_id", "developer_id", "project", "developer", "month", "truck_factor_member",
          "off_hours_commits", "weekend_commits", "inactive_months_at_end", "toxic_emitted", "received",
-         "toxic_received", "negative_emitted", "negative_received", *(v.key for v in DEVELOPER_MONTH_VARS)]
+         "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads",
+         *(v.key for v in DEVELOPER_MONTH_VARS)]
     ]  # fmt: skip
 
 
@@ -173,6 +199,8 @@ def developer_frame(
         toxic_received=("toxic_received", lambda x: x.sum(min_count=1)),
         negative_emitted=("negative_emitted", lambda x: x.sum(min_count=1)),
         negative_received=("negative_received", lambda x: x.sum(min_count=1)),
+        threads=("threads", lambda x: x.sum(min_count=1)),
+        toxic_threads=("toxic_threads", lambda x: x.sum(min_count=1)),
     ).reset_index()
     out["tenure_months"] = [_month_diff(a, b) + 1 for a, b in zip(out["first_month"], out["last_month"])]
     out["core_share"] = out["core_months"] / out["active_months"]
@@ -186,6 +214,9 @@ def developer_frame(
     out["toxic_received_share"] = out["toxic_received"] / out["received"].replace(0, np.nan)
     out["negative_emitted_share"] = out["negative_emitted"] / out["messages"].replace(0, np.nan)
     out["negative_received_share"] = out["negative_received"] / out["received"].replace(0, np.nan)
+    out["toxic_thread_share"] = out["toxic_threads"] / out["threads"].replace(0, np.nan)
+    overall = community_toxicity(db, out["project_id"].unique().tolist(), by_month=False)
+    out["community_toxicity"] = out["project_id"].map(overall)
     return out[
         ["project_id", "developer_id", "project", "developer", "first_month", "last_month",
          *(v.key for v in DEVELOPER_VARS)]

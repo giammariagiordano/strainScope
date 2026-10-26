@@ -94,3 +94,11 @@ def test_unmeasured_text_metrics_stay_missing():
     rows, _ = subject_rows(np.array([0, 1, 2]), {c: np.ones(3) for c in ("commits", "comments", "reviews", "centrality", "opened", "off_hours_commits", "is_core")},
                            0, 60, K, WINDOW, 1, "abandonment")  # fmt: skip
     assert all(np.isnan(r["toxic_emitted_share"]) and np.isnan(r["toxic_received"]) for r in rows)
+
+
+def test_community_toxicity_uses_previous_window_of_the_project():
+    from app.survival import _community_share
+    community = {10: (4, 1), 11: (6, 0), 12: (10, 10)}  # month -> (classified conversations, toxic)
+    assert _community_share(community, 12, 3) == 1 / 10  # months 9-11 only; month 12 itself excluded
+    assert _community_share(community, 30, 3) == 0.0  # no conversations in the window
+    assert np.isnan(_community_share(None, 12, 3))  # not measured

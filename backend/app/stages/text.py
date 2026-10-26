@@ -192,3 +192,81 @@ class SentimentStage(TextStage):
 
     def store(self, row, result):
         row.sentiment = result["polarity"]
+
+
+_AT_MENTION = re.compile(r"(?<![\w.])@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
+
+
+class ConversationToxicityStage(Stage):
+    """Toxicity of whole conversations, the unit the classifier was trained and validated on (docs/TOXICITY.md).
+
+    A conversation is rebuilt like the training data: the issue/PR body followed by the conversation comments
+    (not inline review comments) in chronological order, human authors only, raw text, speakers as P1, P2, ...
+    and @mentions as @user.
+    """
+
+    name = "conversation_toxicity"
+    label = "Conversation toxicity"
+    description = "RoBERTa fine-tuned on 124k GitHub conversations (ASE 2026 data), validated at the natural toxicity rate."
+    batch_size = 64
+
+    @staticmethod
+    def paths():
+        base = settings.external_dir
+        return base / "toxbert-venv" / "bin" / "python", base / "toxicity-gh" / "work" / "models" / "toxic-roberta-github"
+
+    def tool_status(self):
+        python, model = self.paths()
+        if not python.exists() or not (model / "threshold.json").exists():
+            return "conversation toxicity model not installed (see docs/TOXICITY.md)"
+        return None
+
+    def run(self, ctx: StageContext):
+        missing = self.tool_status()
+        if missing:
+            ctx.cursor["skipped"] = True
+            ctx.progress(0, 0, f"Skipped: {missing}")
+            ctx.log(f"{self.label} skipped: {missing}", "warn")
+            return
+        ctx.cursor.pop("skipped", None)
+        pid = ctx.project.id
+        bots = set(ctx.db.scalars(select(Alias.id).where(Alias.project_id == pid, Alias.is_bot)))
+        issues = list(ctx.db.scalars(select(Issue).where(Issue.project_id == pid, Issue.conv_toxic.is_(None))))
+        comments: dict[int, list] = {}
+        for c in ctx.db.scalars(
+            select(Comment).where(Comment.project_id == pid, Comment.kind == "issue_comment").order_by(Comment.created_at)
+        ):
+            comments.setdefault(c.issue_number, []).append(c)
+        work = []
+        for issue in issues:
+            turns = [(issue.alias_id, issue.body)] + [(c.alias_id, c.body) for c in comments.get(issue.number, [])]
+            speakers: dict[int, str] = {}
+            lines = []
+            for alias, body in turns:
+                if alias is None or alias in bots or not (body or "").strip():
+                    continue
+                speakers.setdefault(alias, f"P{len(speakers) + 1}")
+                lines.append(f"{speakers[alias]}: {_AT_MENTION.sub('@user', body)}")
+            if lines:
+                work.append((issue, "\n".join(lines)))
+            else:
+                issue.conv_toxic = -1
+        ctx.progress(len(issues) - len(work), len(issues), f"{len(work)} conversations to classify")
+        ctx.checkpoint()
+        if not work:
+            return
+        python, model = self.paths()
+        clf = ExternalClassifier(python, "convtox_runner.py", str(model), str(Path(__file__).resolve().parents[2] / "scripts" / "toxicity"))
+        done = len(issues) - len(work)
+        try:
+            for start in range(0, len(work), self.batch_size):
+                chunk = work[start : start + self.batch_size]
+                for (issue, _), res in zip(chunk, clf.classify([{"id": i, "text": t} for i, (_, t) in enumerate(chunk)])):
+                    issue.conv_toxic, issue.conv_toxicity_score = res["toxic"], res["p"]
+                done += len(chunk)
+                ctx.progress(done, len(issues), f"{done}/{len(issues)} conversations")
+                ctx.checkpoint()
+        finally:
+            clf.close()
+        toxic = sum(i.conv_toxic == 1 for i, _ in work)
+        ctx.log(f"Classified {len(work)} conversations: {toxic} toxic ({toxic / len(work):.2%})")

@@ -162,6 +162,9 @@ class Issue(Base):
     toxic: Mapped[int | None] = mapped_column(Integer)
     toxicity_p: Mapped[float | None] = mapped_column(Float)
     sentiment: Mapped[str | None] = mapped_column(String(10))  # positive | neutral | negative | none
+    # Whole-conversation toxicity (body + conversation comments): 1 / 0, -1 = nothing to classify. docs/TOXICITY.md
+    conv_toxic: Mapped[int | None] = mapped_column(Integer)
+    conv_toxicity_score: Mapped[float | None] = mapped_column(Float)
 
     __table_args__ = (UniqueConstraint("project_id", "number"),)
 
@@ -208,6 +211,8 @@ class DeveloperMonth(Base):
     toxic_received: Mapped[int | None] = mapped_column(Integer)
     negative_emitted: Mapped[int | None] = mapped_column(Integer)
     negative_received: Mapped[int | None] = mapped_column(Integer)
+    threads: Mapped[int | None] = mapped_column(Integer)  # conversations the developer wrote in this month
+    toxic_threads: Mapped[int | None] = mapped_column(Integer)  # ... of which classified as toxic conversations
     centrality: Mapped[float] = mapped_column(Float, default=0.0)
     degree: Mapped[int] = mapped_column(Integer, default=0)
     is_core: Mapped[bool] = mapped_column(Boolean, default=False)

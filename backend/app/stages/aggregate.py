@@ -70,16 +70,20 @@ class AggregateStage(Stage):
                 r["negative_emitted"] += sentiment == "negative"
 
         issue_author: dict[int, int] = {}
-        for number, alias_id, created, is_pr, toxic, sentiment in ctx.db.execute(
-            select(Issue.number, Issue.alias_id, Issue.created_at, Issue.is_pr, Issue.toxic, Issue.sentiment)
+        conv_toxic: dict[int, int | None] = {}
+        participation: set[tuple[int, str, int]] = set()  # (developer, month, conversation)
+        for number, alias_id, created, is_pr, toxic, sentiment, ctoxic in ctx.db.execute(
+            select(Issue.number, Issue.alias_id, Issue.created_at, Issue.is_pr, Issue.toxic, Issue.sentiment, Issue.conv_toxic)
             .where(Issue.project_id == pid)
         ):
             dev = dev_of.get(alias_id)
+            conv_toxic[number] = ctoxic
             if dev is not None:
                 issue_author[number] = dev
             if (r := touch(dev, created)) is not None:
                 r["prs_opened" if is_pr else "issues_opened"] += 1
                 emit(r, toxic, sentiment)
+                participation.add((dev, month_of(created), number))
 
         received = []  # (author of the thread, month, toxic, sentiment) for messages written by others
         for number, alias_id, created, kind, toxic, sentiment in ctx.db.execute(
@@ -90,6 +94,7 @@ class AggregateStage(Stage):
             if (r := touch(dev, created)) is not None:
                 r["reviews" if kind == "review" else "comments"] += 1
                 emit(r, toxic, sentiment)
+                participation.add((dev, month_of(created), number))
             owner = issue_author.get(number)
             if owner is not None and owner != dev and created is not None:
                 received.append((owner, month_of(created), toxic, sentiment))
@@ -103,6 +108,14 @@ class AggregateStage(Stage):
             if sentiment in ("positive", "neutral", "negative"):
                 r["sentiment_received"] += 1
                 r["negative_received"] += sentiment == "negative"
+
+        # Exposure to toxic conversations: conversations the developer wrote in, and how many of them are toxic.
+        has_conv = any(v in (0, 1) for v in conv_toxic.values())
+        for dev, month, number in participation:
+            r = rows.get((dev, month))
+            if r is not None and conv_toxic.get(number) in (0, 1):
+                r["threads"] += 1
+                r["toxic_threads"] += conv_toxic[number]
 
         strain_cols = ("messages", "toxic_emitted", "received", "toxic_received", "negative_emitted", "negative_received")
         helper_cols = ("sentiment_messages", "sentiment_received")
@@ -122,6 +135,8 @@ class AggregateStage(Stage):
                 values[c] = values.get(c, 0) if has_toxicity else None
             for c in ("negative_emitted", "negative_received"):
                 values[c] = values.get(c, 0) if has_sentiment else None
+            for c in ("threads", "toxic_threads"):
+                values[c] = values.get(c, 0) if has_conv else None
             return DeveloperMonth(project_id=pid, developer_id=dev_id, month=month, **values)
 
         ctx.db.execute(delete(DeveloperMonth).where(DeveloperMonth.project_id == pid))

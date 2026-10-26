@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from . import coxdiag
 from .config import settings
 from .dataset import developer_month_frame
-from .models import Developer
+from .models import Developer, Issue
 
 
 @dataclass(frozen=True)
@@ -59,6 +59,8 @@ COVARIATES = [
     Covariate("toxic_received", "Toxic messages received", "Toxic messages by others on the developer's issues/PRs in the window (ToxiCR).", count=True, default=False),
     Covariate("negative_emitted_share", "Negativity emitted", "Share of the window's messages with negative polarity (Senti4SD); 0 without messages.", default=False),
     Covariate("negative_received", "Negative messages received", "Negative messages by others on the developer's issues/PRs in the window (Senti4SD).", count=True, default=False),
+    Covariate("toxic_threads", "Toxic conversations joined", "Toxic conversations the developer wrote in during the window (conversation classifier).", count=True, default=False),
+    Covariate("community_toxicity", "Community toxicity", "Share of the project's conversations opened in the window that are toxic (project climate).", default=False),
     Covariate("truck_factor_member", "Truck-factor member", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
 ]  # fmt: skip
 COVARIATE_KEYS = [c.key for c in COVARIATES]
@@ -99,6 +101,17 @@ def _share(part: float, total: float) -> float:
     return part / total if total else 0.0
 
 
+def _community_share(community: dict[int, tuple[int, int]] | None, t: int, window: int) -> float:
+    """Toxic share of the project's conversations opened in months [t-window, t-1]; NaN if not measured."""
+    if community is None:
+        return np.nan
+    total = toxic = 0
+    for m in range(t - window, t):
+        n, k = community.get(m, (0, 0))
+        total, toxic = total + n, toxic + k
+    return toxic / total if total else 0.0
+
+
 def _rolling(arr: np.ndarray, window: int, how: str) -> np.ndarray:
     """Value for index i summarizes arr[i-window : i] (strictly before i)."""
     out = np.zeros(len(arr))
@@ -118,6 +131,7 @@ def subject_rows(
     window: int,
     min_active_months: int,
     outcome: str,
+    community: dict[int, tuple[int, int]] | None = None,
 ) -> tuple[list[dict], str]:
     """Risk-set rows for one subject. `months` are the sorted active month indices; `values` hold the
     monthly activity aligned with them. Returns (rows, status) with status ok | no_risk_time | late_entry."""
@@ -134,11 +148,12 @@ def subject_rows(
     idx = months - first
     dense = {}
     for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened",
-                "messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received"):
+                "messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received",
+                "threads", "toxic_threads"):
         a = np.zeros(n)
         a[idx] = values.get(col, np.full(len(months), np.nan))  # NaN = not measured (tool not run)
         dense[col] = a
-    for col in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received"):
+    for col in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads"):
         if np.isnan(dense[col]).all():
             dense[col][:] = np.nan  # keep "not measured" for inactive months too
         else:
@@ -147,7 +162,7 @@ def subject_rows(
     active[idx] = 1
     w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened",
                                                                "messages", "toxic_emitted", "toxic_received",
-                                                               "negative_emitted", "negative_received")}  # fmt: skip
+                                                               "negative_emitted", "negative_received", "toxic_threads")}  # fmt: skip
     w_active = _rolling(active, window, "sum")
     w_core = _rolling(dense["is_core"], window, "max")
     w_cent = _rolling(dense["centrality"], window, "max")
@@ -186,6 +201,8 @@ def subject_rows(
                 "toxic_received": w["toxic_received"][i],
                 "negative_emitted_share": _share(w["negative_emitted"][i], w["messages"][i]),
                 "negative_received": w["negative_received"][i],
+                "toxic_threads": w["toxic_threads"][i],
+                "community_toxicity": _community_share(community, t, window),
                 "truck_factor_member": truck_factor_member,
             }
         )
@@ -217,6 +234,15 @@ def build_intervals(
         .all()
     )
     project_end = dm.groupby("project_id")["midx"].max()
+    # Community climate: classified conversations opened per project and month (absent = not measured).
+    communities: dict[int, dict[int, tuple[int, int]]] = {}
+    for pid, created, toxic in db.execute(
+        select(Issue.project_id, Issue.created_at, Issue.conv_toxic)
+        .where(Issue.project_id.in_(dm["project_id"].unique().tolist()), Issue.conv_toxic.in_([0, 1]))
+    ):
+        m = created.year * 12 + created.month - 1
+        n, k = communities.setdefault(pid, {}).get(m, (0, 0))
+        communities[pid][m] = (n + 1, k + toxic)
 
     rows = []
     for (pid, did), g in dm.groupby(["project_id", "developer_id"], sort=False):
@@ -224,10 +250,10 @@ def build_intervals(
         g = g.sort_values("midx")
         values = {c: g[c].to_numpy(float) for c in ("commits", "comments", "reviews", "off_hours_commits", "centrality",
                                                      "is_core", "opened", "messages", "toxic_emitted", "toxic_received",
-                                                     "negative_emitted", "negative_received")}  # fmt: skip
+                                                     "negative_emitted", "negative_received", "threads", "toxic_threads")}  # fmt: skip
         sub, status = subject_rows(
             g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
-            k, window, min_active_months, outcome,
+            k, window, min_active_months, outcome, communities.get(pid),
         )  # fmt: skip
         if status != "ok":
             stats[status] += 1
