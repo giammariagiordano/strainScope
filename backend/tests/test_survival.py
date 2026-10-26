@@ -102,3 +102,36 @@ def test_community_toxicity_uses_previous_window_of_the_project():
     assert _community_share(community, 12, 3) == 1 / 10  # months 9-11 only; month 12 itself excluded
     assert _community_share(community, 30, 3) == 0.0  # no conversations in the window
     assert np.isnan(_community_share(None, 12, 3))  # not measured
+
+
+# -- context covariates: project decline, time-varying truck factor, responses ------------------------------
+
+from app.survival import ProjectSeries, context_covariates  # noqa: E402
+
+
+def series(tf_history=((10, {1}), (20, {2}))):
+    activity = {m: {1: 1.0, 2: 2.0} for m in range(0, 12)} | {m: {1: 1.0, 3: 1.0} for m in range(12, 30)}
+    issues = {1: {14: [(2.0, False), (30.0, True)], 25: [(4.0, False)]}}
+    return ProjectSeries(activity, list(tf_history) if tf_history is not None else None, issues)
+
+
+def test_project_context_excludes_the_developer_and_is_lagged():
+    c = context_covariates(series(), did=1, t=15, window=3)
+    assert c["project_active_devs"] == 1  # only developer 3 in months 12-14; developer 1 is the subject
+    # others' activity: months 12-14 = 3 (dev 3), months 9-11 = 6 (dev 2)
+    assert np.isclose(c["project_trend"], np.log1p(3) - np.log1p(6))
+    assert context_covariates(series(), did=1, t=12, window=3)["project_active_devs"] == 1  # months 9-11: dev 2
+
+
+def test_truck_factor_uses_the_snapshot_before_the_interval_month():
+    assert context_covariates(series(), 1, t=10, window=3)["truck_factor_member_tv"] == 0  # snapshot of month 10 not yet known
+    assert context_covariates(series(), 1, t=11, window=3)["truck_factor_member_tv"] == 1
+    assert context_covariates(series(), 1, t=21, window=3)["truck_factor_member_tv"] == 0  # replaced by dev 2
+    assert np.isnan(context_covariates(series(None), 1, t=21, window=3)["truck_factor_member_tv"])  # not computed
+
+
+def test_responses_cover_issues_opened_in_the_window():
+    c = context_covariates(series(), 1, t=15, window=3)
+    assert c["unanswered_share"] == 0.5 and c["response_days"] == 16.0  # median of 2 and 30 (capped)
+    none = context_covariates(series(), 1, t=20, window=3)  # nothing opened in months 17-19
+    assert none["unanswered_share"] == 0 and np.isnan(none["response_days"])

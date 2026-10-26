@@ -31,8 +31,8 @@ from sqlalchemy.orm import Session
 
 from . import coxdiag
 from .config import settings
-from .dataset import developer_month_frame
-from .models import Developer, Issue
+from .dataset import developer_month_frame, response_times
+from .models import Developer, Issue, ProjectMetric
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,12 @@ COVARIATES = [
     Covariate("negative_received", "Negative messages received", "Negative messages by others on the developer's issues/PRs in the window (Senti4SD).", count=True, default=False),
     Covariate("toxic_threads", "Toxic conversations joined", "Toxic conversations the developer wrote in during the window (conversation classifier).", count=True, default=False),
     Covariate("community_toxicity", "Community toxicity", "Share of the project's conversations opened in the window that are toxic (project climate).", default=False),
-    Covariate("truck_factor_member", "Truck-factor member", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
+    Covariate("truck_factor_member", "Truck-factor member (fixed)", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
+    Covariate("truck_factor_member_tv", "Truck-factor member", "1 if in the truck-factor set computed from the commits made up to the end of the previous month (no look-ahead)."),
+    Covariate("project_active_devs", "Other active developers", "Distinct other developers active in the project in the window (project size and decline).", count=True),
+    Covariate("project_trend", "Project activity trend", "log((others' activity in the window + 1) / (others' activity in the previous window + 1)); activity = commits + comments + reviews + issues/PRs opened. Negative = the project is slowing down."),
+    Covariate("unanswered_share", "Unanswered issues", "Share of the developer's issues opened in the window that got no comment from another person within 30 days; 0 if none opened (include Issues + PRs opened). PRs are excluded: merges are not mined, so a silent merge would look unanswered.", default=False),
+    Covariate("response_days", "Days to first response", "Median days until another person first commented on the developer's issues opened in the window (unanswered = 30). Undefined, so the interval is excluded, if no issue was opened.", default=False),
 ]  # fmt: skip
 COVARIATE_KEYS = [c.key for c in COVARIATES]
 
@@ -80,7 +85,8 @@ OUTCOMES = {
 GROUPINGS = {
     "core": "Core at entry",
     "off_hours_share": "Off-hours share at entry (above vs below median)",
-    "truck_factor_member": "Truck-factor member (look-ahead)",
+    "truck_factor_member_tv": "Truck-factor member at entry",
+    "truck_factor_member": "Truck-factor member at last commit (look-ahead)",
 }
 
 
@@ -112,6 +118,53 @@ def _community_share(community: dict[int, tuple[int, int]] | None, t: int, windo
     return toxic / total if total else 0.0
 
 
+@dataclass
+class ProjectSeries:
+    """Monthly project-level data used by the context covariates of every subject in the project."""
+
+    activity: dict[int, dict[int, float]]  # month -> {developer: activity}
+    tf_history: list[tuple[int, set[int]]] | None  # sorted (month, truck-factor members at its end); None = not computed
+    issues: dict[int, dict[int, list[tuple[float, bool]]]]  # developer -> month -> [(days to response, unanswered)]
+
+
+def _others(series: ProjectSeries, did: int, lo: int, hi: int) -> tuple[set[int], float]:
+    """Developers other than `did` active in months [lo, hi), and their total activity."""
+    devs, total = set(), 0.0
+    for m in range(lo, hi):
+        for d, a in series.activity.get(m, {}).items():
+            if d != did:
+                devs.add(d)
+                total += a
+    return devs, total
+
+
+def context_covariates(series: ProjectSeries | None, did: int, t: int, window: int) -> dict:
+    """Project decline, time-varying truck-factor membership and responses received, for interval month t
+    (all measured strictly before t, except that a response to an issue opened late in the window may arrive
+    during t: it is someone else's action, not the developer's)."""
+    nan = np.nan
+    if series is None:
+        return {"truck_factor_member_tv": nan, "project_active_devs": nan, "project_trend": nan,
+                "unanswered_share": nan, "response_days": nan}  # fmt: skip
+    devs, act = _others(series, did, t - window, t)
+    _, prev = _others(series, did, t - 2 * window, t - window)
+    tf = nan
+    if series.tf_history is not None:
+        tf = 0.0
+        for m, members in series.tf_history:  # latest snapshot at or before t - 1
+            if m > t - 1:
+                break
+            tf = float(did in members)
+    opened = [x for m in range(t - window, t) for x in series.issues.get(did, {}).get(m, [])]
+    return {
+        "truck_factor_member_tv": tf,
+        "project_active_devs": float(len(devs)),
+        "project_trend": float(np.log1p(act) - np.log1p(prev)),
+        "unanswered_share": float(np.mean([u for _, u in opened])) if opened else 0.0,
+        "response_days": float(np.median([d for d, _ in opened])) if opened else nan,
+    }
+
+
 def _rolling(arr: np.ndarray, window: int, how: str) -> np.ndarray:
     """Value for index i summarizes arr[i-window : i] (strictly before i)."""
     out = np.zeros(len(arr))
@@ -132,6 +185,8 @@ def subject_rows(
     min_active_months: int,
     outcome: str,
     community: dict[int, tuple[int, int]] | None = None,
+    series: ProjectSeries | None = None,
+    developer_id: int | None = None,
 ) -> tuple[list[dict], str]:
     """Risk-set rows for one subject. `months` are the sorted active month indices; `values` hold the
     monthly activity aligned with them. Returns (rows, status) with status ok | no_risk_time | late_entry."""
@@ -204,11 +259,35 @@ def subject_rows(
                 "toxic_threads": w["toxic_threads"][i],
                 "community_toxicity": _community_share(community, t, window),
                 "truck_factor_member": truck_factor_member,
+                **context_covariates(series, developer_id, t, window),
             }
         )
         if is_break and outcome == "break":
             episode += 1
     return rows, ("ok" if rows else "no_risk_time")
+
+
+def project_series(db: Session, dm: pd.DataFrame) -> dict[int, ProjectSeries]:
+    """Per-project monthly activity, truck-factor history and responses to issues, for context_covariates.
+    `dm` is the developer-month frame with `midx` and `opened` added."""
+    pids = [int(p) for p in dm["project_id"].unique()]
+    act = dm.assign(a=dm["commits"] + dm["comments"] + dm["reviews"] + dm["opened"])
+    activity: dict[int, dict[int, dict[int, float]]] = {}
+    for pid, m, did, a in zip(act["project_id"], act["midx"], act["developer_id"], act["a"]):
+        activity.setdefault(int(pid), {}).setdefault(int(m), {})[int(did)] = float(a)
+    histories = {
+        pid: sorted((_midx(month), set(v["members"])) for month, v in value.items())
+        for pid, value in db.execute(
+            select(ProjectMetric.project_id, ProjectMetric.value)
+            .where(ProjectMetric.project_id.in_(pids), ProjectMetric.key == "truck_factor_history")
+        ).tuples()
+    }  # fmt: skip
+    issues: dict[int, dict[int, dict[int, list]]] = {}
+    rt = response_times(db, pids)
+    rt = rt[~rt["is_pr"]]
+    for pid, did, month, days, unanswered in zip(rt["project_id"], rt["developer_id"], rt["month"], rt["days"], rt["unanswered"]):
+        issues.setdefault(int(pid), {}).setdefault(int(did), {}).setdefault(_midx(month), []).append((float(days), bool(unanswered)))
+    return {pid: ProjectSeries(activity.get(pid, {}), histories.get(pid), issues.get(pid, {})) for pid in pids}
 
 
 def build_intervals(
@@ -243,6 +322,7 @@ def build_intervals(
         m = created.year * 12 + created.month - 1
         n, k = communities.setdefault(pid, {}).get(m, (0, 0))
         communities[pid][m] = (n + 1, k + toxic)
+    series = project_series(db, dm)
 
     rows = []
     for (pid, did), g in dm.groupby(["project_id", "developer_id"], sort=False):
@@ -253,7 +333,7 @@ def build_intervals(
                                                      "negative_emitted", "negative_received", "threads", "toxic_threads")}  # fmt: skip
         sub, status = subject_rows(
             g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
-            k, window, min_active_months, outcome, communities.get(pid),
+            k, window, min_active_months, outcome, communities.get(pid), series.get(pid), int(did),
         )  # fmt: skip
         if status != "ok":
             stats[status] += 1
@@ -287,12 +367,17 @@ def fit_cox(
     df = intervals[["sid", "person", "project", "episode", "start", "stop", "event", *covariates]].copy()
     unmeasured = df[covariates].isna().any(axis=1)
     if unmeasured.any():
-        skipped = sorted(df.loc[unmeasured, "project"].unique())
+        missing = [c for c in covariates if df.loc[unmeasured, c].isna().any()]
+        whole = sorted(p for p, g in df.groupby("project") if unmeasured[g.index].all())
         warnings.append(
-            f"{len(skipped)} project(s) excluded because a selected covariate was not measured there "
-            f"(text classification not run): {', '.join(skipped[:5])}{'…' if len(skipped) > 5 else ''}."
+            f"{int(unmeasured.sum())} of {len(df)} intervals excluded because a selected covariate is undefined there "
+            f"({', '.join(missing)}: text classification or truck-factor history not computed, or no issue opened "
+            f"in the window for days to first response)"
+            + (f"; whole projects excluded: {', '.join(whole[:5])}{'…' if len(whole) > 5 else ''}." if whole else ".")
         )
         df = df[~unmeasured]
+    if df.empty:
+        raise ValueError("No interval left once undefined covariate values are excluded")
     # One id per episode: with recurrent events lifelines expects one event per id. The partial
     # likelihood does not depend on the id; dependence between episodes is handled by clustering.
     df["eid"] = df["sid"] + ":" + df["episode"].astype(str)

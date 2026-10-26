@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import Developer, DeveloperMonth, Issue, Project
+from .models import Alias, Comment, Developer, DeveloperMonth, Issue, Project
 
 LEVELS = ("developer", "developer_month")
 
@@ -95,6 +95,53 @@ def community_toxicity(db: Session, project_ids: list[int], by_month: bool = Tru
         d["month"] = d["created_at"].map(lambda t: f"{t.year:04d}-{t.month:02d}")
         return d.groupby(["project_id", "month"])["toxic"].mean().to_dict()
     return d.groupby("project_id")["toxic"].mean().to_dict()
+
+
+RESPONSE_CAP_DAYS = 30
+
+
+def response_times(db: Session, project_ids: list[int]) -> pd.DataFrame:
+    """One row per issue/PR opened by a human: days until the first comment or review by another human
+    (bots and the opener excluded). `unanswered` = no such response within RESPONSE_CAP_DAYS; `days` is then
+    capped at RESPONSE_CAP_DAYS so medians stay defined."""
+    cols = ["project_id", "developer_id", "month", "is_pr", "days", "unanswered"]
+    dev_of = dict(
+        db.execute(
+            select(Alias.id, Alias.developer_id)
+            .join(Developer, Developer.id == Alias.developer_id)
+            .where(Alias.project_id.in_(project_ids), ~Developer.is_bot)
+        ).tuples().all()
+    )  # fmt: skip
+    issues = pd.DataFrame(
+        db.execute(select(Issue.project_id, Issue.number, Issue.alias_id, Issue.is_pr, Issue.created_at).where(Issue.project_id.in_(project_ids))).all(),
+        columns=["project_id", "number", "alias_id", "is_pr", "created_at"],
+    )  # fmt: skip
+    comments = pd.DataFrame(
+        db.execute(select(Comment.project_id, Comment.issue_number, Comment.alias_id, Comment.created_at).where(Comment.project_id.in_(project_ids))).all(),
+        columns=["project_id", "number", "alias_id", "responded_at"],
+    )  # fmt: skip
+    if issues.empty:
+        return pd.DataFrame(columns=cols)
+    issues["developer_id"] = issues["alias_id"].map(dev_of)
+    issues = issues.dropna(subset=["developer_id"])
+    comments["responder"] = comments["alias_id"].map(dev_of)
+    comments = comments.dropna(subset=["responder"])
+    m = issues.merge(comments[["project_id", "number", "responder", "responded_at"]], on=["project_id", "number"], how="left")
+    m = m[m["responder"].isna() | (m["responder"] != m["developer_id"])]
+    first = m.groupby(["project_id", "number"]).agg(
+        developer_id=("developer_id", "first"), is_pr=("is_pr", "first"), created_at=("created_at", "first"),
+        responded_at=("responded_at", "min"),
+    )
+    days = (first["responded_at"] - first["created_at"]).dt.total_seconds() / 86400
+    out = pd.DataFrame({
+        "project_id": first.index.get_level_values(0),
+        "developer_id": first["developer_id"].astype(int).to_numpy(),
+        "month": first["created_at"].map(lambda t: f"{t.year:04d}-{t.month:02d}").to_numpy(),
+        "is_pr": first["is_pr"].astype(bool).to_numpy(),
+        "unanswered": (days.isna() | (days > RESPONSE_CAP_DAYS)).to_numpy(),
+        "days": days.clip(lower=0, upper=RESPONSE_CAP_DAYS).fillna(RESPONSE_CAP_DAYS).to_numpy(),
+    })  # fmt: skip
+    return out[cols]
 
 
 def developer_month_frame(

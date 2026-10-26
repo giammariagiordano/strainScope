@@ -100,7 +100,7 @@ re-running it never duplicates data.
 | 7 | `bots` | Flags bot accounts (GitHub `Bot` type, `[bot]` suffix, known list) | — |
 | 8 | `identities` | Merges aliases (email, name, login, GitHub noreply email) into developers | — |
 | 9 | `aggregate` | Developer × month activity table (commits, lines, off-hours, issues, PRs, comments, reviews) | — |
-| 10 | `structural` | Truck factor, developer network, centrality, core/peripheral (written into the monthly table) | — |
+| 10 | `structural` | Truck factor (at HEAD and month by month), developer network, centrality, core/peripheral (written into the monthly table) | — |
 
 Stages 7–10 only compute on stored data: they are fast and can be re-run on their own
 (e.g. after changing a threshold) without mining again.
@@ -320,8 +320,18 @@ Counting-process design, one subject per developer × project, time in calendar 
 - **Time-varying covariates** for month t summarize months t−W…t−1 (default W = 3), lagged so the activity
   that marks the exit month never enters its own covariates: core (any month), max centrality, off-hours
   share, commits, comments, reviews, issues/PRs opened, active months in the window, cumulative experience.
-- **Truck-factor membership** is available but off by default: it is measured at the last commit, so it uses
-  future information (look-ahead bias). On the test data it shows complete separation (no member abandoned).
+- **Truck-factor membership (time-varying)**, on by default: the `structural` stage replays the commit history
+  and stores the truck factor at the end of every month (`truck_factor_history`), computed from the commits made
+  up to then and the files alive at that point; month t uses the snapshot of t−1. Its last snapshot equals the
+  HEAD-based truck factor on all 100 mined projects. The older fixed membership (measured at the last commit,
+  look-ahead bias) is still available, off by default.
+- **Project decline** (controls, on by default): distinct *other* developers active in the project in the window,
+  and the activity trend log((others' activity + 1) / (others' activity in the previous window + 1)). Without
+  them, developers who leave a dying project are indistinguishable from individual disengagement.
+- **Responses received** (off by default), on the developer's **issues** opened in the window: share with no comment
+  or review by another human within 30 days (0 when none opened, so include *Issues + PRs opened*), and median
+  days to the first response (unanswered = 30; intervals with no issue opened are excluded). Pull requests are
+  left out: merges are not mined, and 46–61% of PRs get no comment, often because they are merged silently.
 - **Model**: `lifelines.CoxTimeVaryingFitter`, optionally stratified by project (separate baseline hazards),
   with log1p for counts, standardization (HR per SD) and an optional L2 penalizer.
 - **Cluster-robust standard errors** (Lin & Wei sandwich, as R's `coxph(..., cluster = id)`), clustered by
@@ -333,8 +343,8 @@ Counting-process design, one subject per developer × project, time in calendar 
   lifelines' `proportional_hazard_test`. Covariates with p < 0.05 are flagged.
 - **Diagnostics in the UI**: events per covariate < 10, (quasi-)separation, few clusters, PH violations,
   unstratified pooling.
-- **Kaplan–Meier** curves of time to the *first* event, by a grouping measured at entry (core, off-hours above/below median, or truck factor
-  with its look-ahead caveat) with a log-rank test.
+- **Kaplan–Meier** curves of time to the *first* event, by a grouping measured at entry (core, off-hours above/below median,
+  truck-factor membership at entry, or the fixed truck factor with its look-ahead caveat) with a log-rank test.
 Estimates come from `lifelines.CoxTimeVaryingFitter` (Efron ties). Score and Schoenfeld residuals,
 the information matrix, the sandwich variance and the PH test are computed in `backend/app/coxdiag.py`
 with Efron's tie correction, following R's `survival` definitions. lifelines' own score residuals ignore

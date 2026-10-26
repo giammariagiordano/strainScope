@@ -58,6 +58,46 @@ def truck_factor(authors: dict[str, set[int]]) -> tuple[int, list[int], dict[int
     return len(removed), removed, authored_count
 
 
+def truck_factor_history(db, pid: int, human) -> dict[str, dict]:
+    """Truck factor as it stood at the end of each month, from the commits made up to then only, so it can enter
+    a model at time t without using the future. Files are those alive at that point of the replay (deletions
+    and renames followed), not HEAD's. Returns {"YYYY-MM": {"tf": n, "members": [developer ids]}} for every
+    month in which the history changed; between keys the previous value holds."""
+    history: dict[str, dict] = {}
+    out: dict[str, dict] = {}
+    current = None  # latest month seen: commit dates are not monotonic in log order
+
+    def snapshot(month):
+        tf, members, _ = truck_factor(file_authors(history))
+        out[month] = {"tf": tf, "members": members}
+
+    q = (
+        select(Commit.alias_id, Commit.authored_at, CommitFile.path, CommitFile.old_path, CommitFile.change_type)
+        .join(CommitFile, CommitFile.commit_id == Commit.id)
+        .where(Commit.project_id == pid)
+        .order_by(Commit.seq, CommitFile.id)
+    )
+    for alias_id, authored, path, old_path, change in db.execute(q):
+        month = month_of(authored)
+        if current is not None and month > current:
+            snapshot(current)
+        current = month if current is None else max(current, month)
+        dev = human(alias_id)
+        if change == "D":
+            history.pop(path, None)
+            continue
+        if change == "R" and old_path:
+            h = history.pop(old_path, None) or {"creator": None, "changes": Counter()}
+        else:
+            h = history.get(path) or {"creator": dev if change == "A" else None, "changes": Counter()}
+        history[path] = h
+        if dev is not None:
+            h["changes"][dev] += 1
+    if current is not None:
+        snapshot(current)
+    return out
+
+
 def month_index(month: str) -> int:
     y, m = month.split("-")
     return int(y) * 12 + int(m) - 1
@@ -126,6 +166,10 @@ class StructuralStage(Stage):
             )
         )
         ctx.log(f"Truck factor = {tf} over {len(authors)} files")
+        ctx.db.execute(
+            delete(ProjectMetric).where(ProjectMetric.project_id == pid, ProjectMetric.key == "truck_factor_history")
+        )
+        ctx.db.add(ProjectMetric(project_id=pid, key="truck_factor_history", value=truck_factor_history(ctx.db, pid, human)))
         ctx.progress(1, 2, f"Truck factor {tf}; building developer networks")
         ctx.checkpoint()
 
