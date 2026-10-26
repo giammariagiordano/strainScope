@@ -59,6 +59,14 @@ COVARIATES = [
     Covariate("toxic_received", "Toxic messages received", "Toxic messages by others on the developer's issues/PRs in the window (ToxiCR).", count=True, default=False),
     Covariate("negative_emitted_share", "Negativity emitted", "Share of the window's messages with negative polarity (Senti4SD); 0 without messages.", default=False),
     Covariate("negative_received", "Negative messages received", "Negative messages by others on the developer's issues/PRs in the window (Senti4SD).", count=True, default=False),
+    Covariate("we_share", "Belonging (we-talk)", "Share of first-person pronouns in the window's messages that are plural (we, our, let's). Undefined without pronouns: the interval is excluded.", default=False),
+    Covariate("thanks_emitted_share", "Gratitude expressed", "Share of the window's messages that thank or appreciate someone; 0 without messages.", default=False),
+    Covariate("thanks_received", "Gratitude received", "Messages by other people on the developer's issues/PRs in the window that thank or appreciate.", count=True, default=False),
+    Covariate("anger_share", "Anger expressed", "Share of the window's messages expressing anger (EmoTxt); 0 without messages.", default=False),
+    Covariate("joy_share", "Joy expressed", "Share of the window's messages expressing joy (EmoTxt); 0 without messages.", default=False),
+    Covariate("sadness_share", "Sadness expressed", "Share of the window's messages expressing sadness (EmoTxt); 0 without messages.", default=False),
+    Covariate("anger_received", "Anger received", "Messages by others on the developer's issues/PRs in the window expressing anger (EmoTxt).", count=True, default=False),
+    Covariate("reactions_pos_received", "Positive reactions received", "👍 ❤️ 🎉 🚀 on the developer's issues, PRs and comments written in the window.", count=True, default=False),
     Covariate("toxic_threads", "Toxic conversations joined", "Toxic conversations the developer wrote in during the window (conversation classifier).", count=True, default=False),
     Covariate("community_toxicity", "Community toxicity", "Share of the project's conversations opened in the window that are toxic (project climate).", default=False),
     Covariate("truck_factor_member", "Truck-factor member (fixed)", "Fixed. Measured at the last commit, so it uses future information (look-ahead bias): interpret with care.", default=False),
@@ -81,6 +89,7 @@ PH_TRANSFORMS = ("rank", "log", "identity")
 OUTCOMES = {
     "abandonment": "Abandonment: stops and never comes back",
     "disengagement": "Disengagement: abandons and shows no public GitHub activity elsewhere in the next 12 months",
+    "moved": "Moved elsewhere: abandons and contributes to other GitHub repositories in the next 12 months",
     "break": "Any long pause (≥ K months, with or without return; recurrent)",
 }
 
@@ -171,6 +180,10 @@ def context_covariates(series: ProjectSeries | None, did: int, t: int, window: i
     }
 
 
+PSYCH_WINDOW = ("psych_messages", "we_words", "i_words", "thanks_emitted", "thanks_received", "reactions_pos_received",
+                "emotion_messages", "anger_emitted", "joy_emitted", "sadness_emitted", "anger_received")
+
+
 def _rolling(arr: np.ndarray, window: int, how: str) -> np.ndarray:
     """Value for index i summarizes arr[i-window : i] (strictly before i)."""
     out = np.zeros(len(arr))
@@ -213,11 +226,12 @@ def subject_rows(
     dense = {}
     for col in ("commits", "comments", "reviews", "off_hours_commits", "centrality", "is_core", "opened",
                 "messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received",
-                "threads", "toxic_threads"):
+                "threads", "toxic_threads", *PSYCH_WINDOW):
         a = np.zeros(n)
         a[idx] = values.get(col, np.full(len(months), np.nan))  # NaN = not measured (tool not run)
         dense[col] = a
-    for col in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads"):
+    for col in ("messages", "toxic_emitted", "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads",
+                *PSYCH_WINDOW):
         if np.isnan(dense[col]).all():
             dense[col][:] = np.nan  # keep "not measured" for inactive months too
         else:
@@ -226,7 +240,8 @@ def subject_rows(
     active[idx] = 1
     w = {key: _rolling(dense[key], window, "sum") for key in ("commits", "comments", "reviews", "off_hours_commits", "opened",
                                                                "messages", "toxic_emitted", "toxic_received",
-                                                               "negative_emitted", "negative_received", "toxic_threads")}  # fmt: skip
+                                                               "negative_emitted", "negative_received", "toxic_threads",
+                                                               *PSYCH_WINDOW)}  # fmt: skip
     w_active = _rolling(active, window, "sum")
     w_core = _rolling(dense["is_core"], window, "max")
     w_cent = _rolling(dense["centrality"], window, "max")
@@ -242,12 +257,14 @@ def subject_rows(
         is_break = gap_after >= k
         returned = nxt is not None
         abandons = is_break and not returned
-        if outcome == "disengagement" and abandons and left_github is None:
+        if outcome in ("disengagement", "moved") and abandons and left_github is None:
             return [], "unknown_after_exit"  # cannot tell leaving the project from leaving GitHub
         if outcome == "break":
             event = is_break
         elif outcome == "disengagement":
             event = abandons and bool(left_github)  # moved elsewhere = censored at exit (cause-specific hazard)
+        elif outcome == "moved":
+            event = abandons and left_github is False  # left GitHub = censored at exit (the competing cause)
         else:
             event = abandons
         i = t - first
@@ -275,6 +292,14 @@ def subject_rows(
                 "negative_emitted_share": _share(w["negative_emitted"][i], w["messages"][i]),
                 "negative_received": w["negative_received"][i],
                 "toxic_threads": w["toxic_threads"][i],
+                "we_share": _share(w["we_words"][i], w["we_words"][i] + w["i_words"][i]) if w["we_words"][i] + w["i_words"][i] else np.nan,
+                "thanks_emitted_share": _share(w["thanks_emitted"][i], w["psych_messages"][i]),
+                "thanks_received": w["thanks_received"][i],
+                "reactions_pos_received": w["reactions_pos_received"][i],
+                "anger_share": _share(w["anger_emitted"][i], w["emotion_messages"][i]),
+                "joy_share": _share(w["joy_emitted"][i], w["emotion_messages"][i]),
+                "sadness_share": _share(w["sadness_emitted"][i], w["emotion_messages"][i]),
+                "anger_received": w["anger_received"][i],
                 "community_toxicity": _community_share(community, t, window),
                 "truck_factor_member": truck_factor_member,
                 **context_covariates(series, developer_id, t, window),
@@ -383,7 +408,8 @@ def build_intervals(
         g = g.sort_values("midx")
         values = {c: g[c].to_numpy(float) for c in ("commits", "comments", "reviews", "off_hours_commits", "centrality",
                                                      "is_core", "opened", "messages", "toxic_emitted", "toxic_received",
-                                                     "negative_emitted", "negative_received", "threads", "toxic_threads")}  # fmt: skip
+                                                     "negative_emitted", "negative_received", "threads", "toxic_threads",
+                                                     *PSYCH_WINDOW)}  # fmt: skip
         sub, status = subject_rows(
             g["midx"].to_numpy(), values, int(g["truck_factor_member"].iloc[0]), int(project_end[pid]),
             k, window, min_active_months, outcome, communities.get(pid), series.get(pid), int(did), after_exit.get(did),

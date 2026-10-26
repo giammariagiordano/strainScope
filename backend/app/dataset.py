@@ -8,9 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import settings
-from .models import Alias, Comment, Developer, DeveloperMonth, Issue, Project
+from .models import Alias, Comment, Developer, DeveloperMonth, Issue, Project, ProjectMetric
 
-LEVELS = ("developer", "developer_month")
+LEVELS = ("project", "developer", "developer_month")
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,21 @@ DEVELOPER_MONTH_VARS = [
     Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity (Senti4SD).", "share"),
     Variable("toxic_thread_share", "Toxic conversations joined", "Share of the conversations the developer wrote in this month that are toxic (conversation classifier, docs/TOXICITY.md).", "share"),
     Variable("community_toxicity", "Community toxicity", "Share of the project's conversations opened this month that are toxic (same for every developer of the project).", "share"),
+    Variable("we_share", "Belonging (we-talk)", "Share of first-person pronouns that are plural (we, our, let's) rather than singular (I, my) in the developer's messages: identification with the group (Pennebaker). Undefined without pronouns.", "share"),
+    Variable("we_rate", "We-words per 100 words", "First-person plural pronouns per 100 words written.", "score"),
+    Variable("i_rate", "I-words per 100 words", "First-person singular pronouns per 100 words written.", "score"),
+    Variable("thanks_emitted_share", "Gratitude expressed", "Share of the developer's messages that thank or appreciate someone.", "share"),
+    Variable("thanks_received", "Gratitude received", "Messages by other people (not bots) on the developer's issues/PRs that thank or appreciate."),
+    Variable("thanks_received_share", "Gratitude received (share)", "Share of other people's messages on the developer's issues/PRs that thank or appreciate. Undefined without replies.", "share"),
+    Variable("reactions_pos_per_item", "Positive reactions per item", "👍 ❤️ 🎉 🚀 reactions received per issue, PR or comment written by the developer.", "score"),
+    Variable("reactions_neg_per_item", "Negative reactions per item", "👎 😕 reactions received per issue, PR or comment written by the developer.", "score"),
+    Variable("anger_share", "Anger", "Share of the developer's messages expressing anger (EmoTxt).", "share"),
+    Variable("joy_share", "Joy", "Share of the developer's messages expressing joy (EmoTxt).", "share"),
+    Variable("love_share", "Love", "Share of the developer's messages expressing love (EmoTxt).", "share"),
+    Variable("sadness_share", "Sadness", "Share of the developer's messages expressing sadness (EmoTxt).", "share"),
+    Variable("fear_share", "Fear", "Share of the developer's messages expressing fear (EmoTxt).", "share"),
+    Variable("surprise_share", "Surprise", "Share of the developer's messages expressing surprise (EmoTxt).", "share"),
+    Variable("anger_received_share", "Anger received", "Share of other people's messages on the developer's issues/PRs expressing anger (EmoTxt).", "share"),
     Variable("pause_start", "Long pause starts", "1 if this month is followed by at least the threshold of inactivity and the developer later returns.", "binary"),
     Variable("exit", "Exit month", "1 if this is the developer's last active month and they then stay inactive for at least the abandonment threshold before the end of observation.", "binary"),
 ]  # fmt: skip
@@ -68,12 +83,52 @@ DEVELOPER_VARS = [
     Variable("negative_received_share", "Negativity received", "Share of messages by others on the developer's issues/PRs with negative polarity.", "share"),
     Variable("toxic_thread_share", "Toxic conversations joined", "Share of all conversations the developer wrote in that are toxic.", "share"),
     Variable("community_toxicity", "Community toxicity", "Share of all the project's conversations that are toxic (project-level).", "share"),
+    Variable("we_share", "Belonging (we-talk)", "Share of first-person pronouns that are plural (we, our, let's) rather than singular (I, my) in all the developer's messages: identification with the group (Pennebaker). Undefined without pronouns.", "share"),
+    Variable("we_rate", "We-words per 100 words", "First-person plural pronouns per 100 words written.", "score"),
+    Variable("i_rate", "I-words per 100 words", "First-person singular pronouns per 100 words written.", "score"),
+    Variable("thanks_emitted_share", "Gratitude expressed", "Share of the developer's messages that thank or appreciate someone.", "share"),
+    Variable("thanks_received", "Gratitude received", "Messages by other people (not bots) on the developer's issues/PRs that thank or appreciate."),
+    Variable("thanks_received_share", "Gratitude received (share)", "Share of other people's messages on the developer's issues/PRs that thank or appreciate. Undefined without replies.", "share"),
+    Variable("reactions_pos_per_item", "Positive reactions per item", "👍 ❤️ 🎉 🚀 reactions received per issue, PR or comment written by the developer.", "score"),
+    Variable("reactions_neg_per_item", "Negative reactions per item", "👎 😕 reactions received per issue, PR or comment written by the developer.", "score"),
+    Variable("anger_share", "Anger", "Share of the developer's messages expressing anger (EmoTxt).", "share"),
+    Variable("joy_share", "Joy", "Share of the developer's messages expressing joy (EmoTxt).", "share"),
+    Variable("love_share", "Love", "Share of the developer's messages expressing love (EmoTxt).", "share"),
+    Variable("sadness_share", "Sadness", "Share of the developer's messages expressing sadness (EmoTxt).", "share"),
+    Variable("fear_share", "Fear", "Share of the developer's messages expressing fear (EmoTxt).", "share"),
+    Variable("surprise_share", "Surprise", "Share of the developer's messages expressing surprise (EmoTxt).", "share"),
+    Variable("anger_received_share", "Anger received", "Share of other people's messages on the developer's issues/PRs expressing anger (EmoTxt).", "share"),
     Variable("active_elsewhere_after", "Active elsewhere after leaving", "For developers who left (≥ 2 active months, last activity ≥ 6 months before the end): 1 if they made public GitHub contributions to other repositories (or private ones) in the 12 months after their last month here, 0 if not; empty if not checked.", "binary"),
     Variable("long_pauses", "Long pauses", "Pauses of at least the threshold after which the developer came back."),
     Variable("abandoned", "Abandoned", "1 if the developer has been inactive for at least the abandonment threshold at the end of observation. Right-censored: recent leavers count as 0.", "binary"),
 ]  # fmt: skip
 
-VARIABLES = {"developer": DEVELOPER_VARS, "developer_month": DEVELOPER_MONTH_VARS}
+PROJECT_VARS = [
+    Variable("developers", "Developers", "Human developers with any activity."),
+    Variable("sustained_developers", "Sustained developers", "Developers active in at least 6 months."),
+    Variable("months_observed", "Months observed", "Months with any developer activity."),
+    Variable("truck_factor", "Truck factor", "Truck factor at HEAD (Avelino et al.)."),
+    Variable("core_size", "Core size", "Mean number of core developers per month."),
+    Variable("abandonment_rate", "Abandonment rate", "Share of developers with ≥ 2 active months who abandoned (inactive ≥ threshold at the end).", "share"),
+    Variable("moved_elsewhere_share", "Leavers active elsewhere", "Share of checked leavers with GitHub activity elsewhere in the 12 months after leaving.", "share"),
+    Variable("off_hours_share", "Off-hours share", "Share of all commits on weekends or outside working hours.", "share"),
+    Variable("negative_emitted_share", "Negativity", "Share of all messages with negative polarity (Senti4SD).", "share"),
+    Variable("we_share", "Belonging (we-talk)", "Share of first-person pronouns that are plural, over all messages.", "share"),
+    Variable("thanks_emitted_share", "Gratitude expressed", "Share of all messages that thank or appreciate someone.", "share"),
+    Variable("thanks_received_share", "Gratitude in replies", "Share of replies on issues/PRs (by people other than the author) that thank or appreciate.", "share"),
+    Variable("reactions_pos_per_item", "Positive reactions per item", "👍 ❤️ 🎉 🚀 per issue, PR or comment.", "score"),
+    Variable("anger_share", "Anger", "Share of all messages expressing anger (EmoTxt).", "share"),
+    Variable("joy_share", "Joy", "Share of all messages expressing joy (EmoTxt).", "share"),
+    Variable("love_share", "Love", "Share of all messages expressing love (EmoTxt).", "share"),
+    Variable("sadness_share", "Sadness", "Share of all messages expressing sadness (EmoTxt).", "share"),
+    Variable("fear_share", "Fear", "Share of all messages expressing fear (EmoTxt).", "share"),
+    Variable("surprise_share", "Surprise", "Share of all messages expressing surprise (EmoTxt).", "share"),
+    Variable("pr_merge_rate", "PR merge rate", "Share of pull requests merged on GitHub (low values: mirror projects developed elsewhere).", "share"),
+    Variable("response_days", "Days to first response", "Median days to the first response by another person on issues and PRs (unanswered = 30).", "score"),
+    Variable("ai_pr_share", "AI PRs", "Share of pull requests with declared AI involvement (agent or disclosed).", "share"),
+]  # fmt: skip
+
+VARIABLES = {"project": PROJECT_VARS, "developer": DEVELOPER_VARS, "developer_month": DEVELOPER_MONTH_VARS}
 
 
 def _month_diff(a: str, b: str) -> int:
@@ -161,6 +216,32 @@ def response_times(db: Session, project_ids: list[int]) -> pd.DataFrame:
     return out[cols]
 
 
+PSYCH_COLUMNS = (
+    DeveloperMonth.psych_messages, DeveloperMonth.words, DeveloperMonth.we_words, DeveloperMonth.i_words,
+    DeveloperMonth.thanks_emitted, DeveloperMonth.replies_received, DeveloperMonth.thanks_received,
+    DeveloperMonth.reacted_items, DeveloperMonth.reactions_pos_received, DeveloperMonth.reactions_neg_received,
+    DeveloperMonth.emotion_messages, DeveloperMonth.anger_emitted, DeveloperMonth.joy_emitted, DeveloperMonth.love_emitted,
+    DeveloperMonth.sadness_emitted, DeveloperMonth.fear_emitted, DeveloperMonth.surprise_emitted,
+    DeveloperMonth.emotion_received, DeveloperMonth.anger_received,
+)  # fmt: skip
+PSYCH_KEYS = [c.key for c in PSYCH_COLUMNS]
+
+
+def psych_ratios(df: pd.DataFrame) -> None:
+    """Shares and rates of the psycholinguistic counts (app.psych), in place; undefined denominators give NaN."""
+    nz = lambda c: df[c].replace(0, np.nan)  # noqa: E731
+    df["we_share"] = df["we_words"] / (df["we_words"] + df["i_words"]).replace(0, np.nan)
+    df["we_rate"] = 100 * df["we_words"] / nz("words")
+    df["i_rate"] = 100 * df["i_words"] / nz("words")
+    df["thanks_emitted_share"] = df["thanks_emitted"] / nz("psych_messages")
+    df["thanks_received_share"] = df["thanks_received"] / nz("replies_received")
+    df["reactions_pos_per_item"] = df["reactions_pos_received"] / nz("reacted_items")
+    df["reactions_neg_per_item"] = df["reactions_neg_received"] / nz("reacted_items")
+    for e in ("anger", "joy", "love", "sadness", "fear", "surprise"):
+        df[f"{e}_share"] = df[f"{e}_emitted"] / nz("emotion_messages")
+    df["anger_received_share"] = df["anger_received"] / nz("emotion_received")
+
+
 def developer_month_frame(
     db: Session, project_ids: list[int] | None = None, abandon_months: int | None = None
 ) -> pd.DataFrame:
@@ -176,7 +257,7 @@ def developer_month_frame(
             DeveloperMonth.reviews, DeveloperMonth.centrality, DeveloperMonth.degree, DeveloperMonth.is_core,
             DeveloperMonth.messages, DeveloperMonth.toxic_emitted, DeveloperMonth.received,
             DeveloperMonth.toxic_received, DeveloperMonth.negative_emitted, DeveloperMonth.negative_received,
-            DeveloperMonth.threads, DeveloperMonth.toxic_threads,
+            DeveloperMonth.threads, DeveloperMonth.toxic_threads, *PSYCH_COLUMNS,
         )
         .join(Developer, Developer.id == DeveloperMonth.developer_id)
         .join(Project, Project.id == DeveloperMonth.project_id)
@@ -203,6 +284,8 @@ def developer_month_frame(
     df["negative_emitted_share"] = df["negative_emitted"] / df["messages"].replace(0, np.nan)
     df["negative_received_share"] = df["negative_received"] / df["received"].replace(0, np.nan)
     df["toxic_thread_share"] = df["toxic_threads"] / df["threads"].replace(0, np.nan)
+    df[PSYCH_KEYS] = df[PSYCH_KEYS].astype(float)
+    psych_ratios(df)
     climate = community_toxicity(db, df["project_id"].unique().tolist())
     df["community_toxicity"] = [climate.get((p, m), np.nan) for p, m in zip(df["project_id"], df["month"])]
     df["truck_factor_member"] = df["truck_factor_member"].astype(int)
@@ -219,8 +302,8 @@ def developer_month_frame(
     return df[
         ["project_id", "developer_id", "project", "developer", "month", "truck_factor_member",
          "off_hours_commits", "weekend_commits", "inactive_months_at_end", "toxic_emitted", "received",
-         "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads",
-         *(v.key for v in DEVELOPER_MONTH_VARS)]
+         "toxic_received", "negative_emitted", "negative_received", "threads", "toxic_threads", *PSYCH_KEYS,
+         *(v.key for v in DEVELOPER_MONTH_VARS if v.key not in PSYCH_KEYS)]
     ]  # fmt: skip
 
 
@@ -265,6 +348,7 @@ def developer_frame(
         negative_received=("negative_received", lambda x: x.sum(min_count=1)),
         threads=("threads", lambda x: x.sum(min_count=1)),
         toxic_threads=("toxic_threads", lambda x: x.sum(min_count=1)),
+        **{c: (c, lambda x: x.sum(min_count=1)) for c in PSYCH_KEYS},
     ).reset_index()
     out["tenure_months"] = [_month_diff(a, b) + 1 for a, b in zip(out["first_month"], out["last_month"])]
     out["core_share"] = out["core_months"] / out["active_months"]
@@ -279,6 +363,7 @@ def developer_frame(
     out["negative_emitted_share"] = out["negative_emitted"] / out["messages"].replace(0, np.nan)
     out["negative_received_share"] = out["negative_received"] / out["received"].replace(0, np.nan)
     out["toxic_thread_share"] = out["toxic_threads"] / out["threads"].replace(0, np.nan)
+    psych_ratios(out)
     overall = community_toxicity(db, out["project_id"].unique().tolist(), by_month=False)
     out["community_toxicity"] = out["project_id"].map(overall)
     checked = db.execute(
@@ -293,10 +378,49 @@ def developer_frame(
     ]  # fmt: skip
 
 
+def project_frame(
+    db: Session, project_ids: list[int] | None = None, abandon_months: int | None = None
+) -> pd.DataFrame:
+    """One row per project: size, abandonment and the overall psychological climate (pooled over all messages)."""
+    abandon_months = abandon_months or settings.abandon_months
+    dm = developer_month_frame(db, project_ids, abandon_months)
+    if dm.empty:
+        return pd.DataFrame(columns=["project", *(v.key for v in PROJECT_VARS)])
+    dev = developer_frame(db, project_ids, abandon_months)
+    pids = [int(p) for p in dm["project_id"].unique()]
+    sums = dm.groupby(["project_id", "project"])[
+        ["commits", "off_hours_commits", "messages", "negative_emitted", *PSYCH_KEYS]
+    ].sum(min_count=1).reset_index()  # fmt: skip
+    psych_ratios(sums)
+    sums["off_hours_share"] = sums["off_hours_commits"] / sums["commits"].replace(0, np.nan)
+    sums["negative_emitted_share"] = sums["negative_emitted"] / sums["messages"].replace(0, np.nan)
+    out = sums.set_index("project_id")
+    out["developers"] = dev.groupby("project_id").size()
+    out["sustained_developers"] = dev[dev["active_months"] >= 6].groupby("project_id").size()
+    out["sustained_developers"] = out["sustained_developers"].fillna(0)
+    out["months_observed"] = dm.groupby("project_id")["month"].nunique()
+    out["core_size"] = dm.groupby(["project_id", "month"])["is_core"].sum().groupby("project_id").mean()
+    stayers = dev[dev["active_months"] >= 2]
+    out["abandonment_rate"] = stayers.groupby("project_id")["abandoned"].mean()
+    out["moved_elsewhere_share"] = dev[dev["abandoned"] == 1].groupby("project_id")["active_elsewhere_after"].mean()
+    tf = dict(db.execute(select(ProjectMetric.project_id, ProjectMetric.value)
+                         .where(ProjectMetric.project_id.in_(pids), ProjectMetric.key == "truck_factor")).tuples().all())  # fmt: skip
+    out["truck_factor"] = pd.Series({p: v.get("value") for p, v in tf.items()}, dtype=float)
+    prs = pd.DataFrame(db.execute(select(Issue.project_id, Issue.merged, Issue.ai_source).where(Issue.project_id.in_(pids), Issue.is_pr)).all(),
+                       columns=["project_id", "merged", "ai_source"])  # fmt: skip
+    known = prs.dropna(subset=["merged"])
+    out["pr_merge_rate"] = known.groupby("project_id")["merged"].mean().astype(float)
+    out["ai_pr_share"] = prs.assign(ai=prs["ai_source"].notna()).groupby("project_id")["ai"].mean().astype(float)
+    rt = response_times(db, pids)
+    rt = rt[~rt["is_pr"] | rt["outcome_known"]]
+    out["response_days"] = rt.groupby("project_id")["days"].median()
+    return out.reset_index()[["project_id", "project", *(v.key for v in PROJECT_VARS)]]
+
+
 def frame(
     db: Session, level: str, project_ids: list[int] | None = None, abandon_months: int | None = None
 ) -> pd.DataFrame:
     if level not in LEVELS:
         raise ValueError(f"unknown level {level}")
-    build = developer_frame if level == "developer" else developer_month_frame
+    build = {"project": project_frame, "developer": developer_frame, "developer_month": developer_month_frame}[level]
     return build(db, project_ids, abandon_months)

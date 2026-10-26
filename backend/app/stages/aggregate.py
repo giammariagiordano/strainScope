@@ -6,6 +6,12 @@ from sqlalchemy import delete, select
 from ..config import settings
 from ..models import Alias, Comment, Commit, Developer, DeveloperMonth, Issue
 from ..pipeline import Stage, StageContext
+from ..psych import grateful, pronouns
+from .text import clean_text
+
+
+EMOTIONS = ("anger", "joy", "love", "sadness", "fear", "surprise")
+EMOTION_COLUMNS = ("emotion_messages", *(f"{e}_emitted" for e in EMOTIONS), "emotion_received", "anger_received")
 
 
 def month_of(dt) -> str:
@@ -55,7 +61,34 @@ class AggregateStage(Stage):
             r["off_hours_commits"] += off
             r["weekend_commits"] += weekend
 
-        has_toxicity = has_sentiment = False
+        bots = set(ctx.db.scalars(select(Developer.id).where(Developer.project_id == pid, Developer.is_bot)))
+        has_toxicity = has_sentiment = has_reactions = has_emotions = False
+
+        def feel(r, emotions):
+            """Emotions (EmoTxt) of a classified message written by the developer."""
+            nonlocal has_emotions
+            if emotions is not None and emotions != "-":
+                has_emotions = True
+                r["emotion_messages"] += 1
+                for e in filter(None, emotions.split(",")):
+                    r[f"{e}_emitted"] += 1
+
+        def psych(r, raw, pos, neg):
+            """Psycholinguistic markers of a message written by the developer, and reactions it received."""
+            nonlocal has_reactions
+            text = clean_text(raw)
+            words, we, i = pronouns(text)
+            if words:
+                r["psych_messages"] += 1
+                r["words"] += words
+                r["we_words"] += we
+                r["i_words"] += i
+                r["thanks_emitted"] += grateful(text)
+            if pos is not None:
+                has_reactions = True
+                r["reacted_items"] += 1
+                r["reactions_pos_received"] += pos
+                r["reactions_neg_received"] += neg
 
         def emit(r, toxic, sentiment):
             """Count a classified message written by the developer."""
@@ -72,10 +105,11 @@ class AggregateStage(Stage):
         issue_author: dict[int, int] = {}
         conv_toxic: dict[int, int | None] = {}
         participation: set[tuple[int, str, int]] = set()  # (developer, month, conversation)
-        for number, alias_id, created, is_pr, toxic, sentiment, ctoxic in ctx.db.execute(
-            select(Issue.number, Issue.alias_id, Issue.created_at, Issue.is_pr, Issue.toxic, Issue.sentiment, Issue.conv_toxic)
+        for number, alias_id, created, is_pr, toxic, sentiment, ctoxic, body, pos, neg, emotions in ctx.db.execute(
+            select(Issue.number, Issue.alias_id, Issue.created_at, Issue.is_pr, Issue.toxic, Issue.sentiment, Issue.conv_toxic,
+                   Issue.body, Issue.reactions_pos, Issue.reactions_neg, Issue.emotions)
             .where(Issue.project_id == pid)
-        ):
+        ):  # fmt: skip
             dev = dev_of.get(alias_id)
             conv_toxic[number] = ctoxic
             if dev is not None:
@@ -83,25 +117,38 @@ class AggregateStage(Stage):
             if (r := touch(dev, created)) is not None:
                 r["prs_opened" if is_pr else "issues_opened"] += 1
                 emit(r, toxic, sentiment)
+                psych(r, body, pos, neg)
+                feel(r, emotions)
                 participation.add((dev, month_of(created), number))
 
-        received = []  # (author of the thread, month, toxic, sentiment) for messages written by others
-        for number, alias_id, created, kind, toxic, sentiment in ctx.db.execute(
-            select(Comment.issue_number, Comment.alias_id, Comment.created_at, Comment.kind, Comment.toxic, Comment.sentiment)
+        received = []  # (author of the thread, month, toxic, sentiment, grateful) for messages written by others
+        for number, alias_id, created, kind, toxic, sentiment, body, pos, neg, emotions in ctx.db.execute(
+            select(Comment.issue_number, Comment.alias_id, Comment.created_at, Comment.kind, Comment.toxic, Comment.sentiment,
+                   Comment.body, Comment.reactions_pos, Comment.reactions_neg, Comment.emotions)
             .where(Comment.project_id == pid)
-        ):
+        ):  # fmt: skip
             dev = dev_of.get(alias_id)
             if (r := touch(dev, created)) is not None:
                 r["reviews" if kind == "review" else "comments"] += 1
                 emit(r, toxic, sentiment)
+                psych(r, body, pos, neg)
+                feel(r, emotions)
                 participation.add((dev, month_of(created), number))
             owner = issue_author.get(number)
             if owner is not None and owner != dev and created is not None:
-                received.append((owner, month_of(created), toxic, sentiment))
-        for owner, month, toxic, sentiment in received:
+                # Bots thank automatically ("Thanks for your contribution!"): not recognition by people.
+                thanks = None if dev is None or dev in bots else grateful(clean_text(body))
+                received.append((owner, month_of(created), toxic, sentiment, thanks, emotions))
+        for owner, month, toxic, sentiment, thanks, emotions in received:
             r = rows.get((owner, month))
             if r is None:
                 continue  # receiving alone does not make a month active
+            if thanks is not None:
+                r["replies_received"] += 1
+                r["thanks_received"] += thanks
+                if emotions is not None and emotions != "-":
+                    r["emotion_received"] += 1
+                    r["anger_received"] += "anger" in emotions.split(",")
             if toxic in (0, 1):
                 r["received"] += 1
                 r["toxic_received"] += toxic
@@ -137,6 +184,12 @@ class AggregateStage(Stage):
                 values[c] = values.get(c, 0) if has_sentiment else None
             for c in ("threads", "toxic_threads"):
                 values[c] = values.get(c, 0) if has_conv else None
+            for c in ("psych_messages", "words", "we_words", "i_words", "thanks_emitted", "replies_received", "thanks_received"):
+                values[c] = values.get(c, 0)  # dictionary counts: always measured
+            for c in ("reacted_items", "reactions_pos_received", "reactions_neg_received"):
+                values[c] = values.get(c, 0) if has_reactions else None  # mined before reactions were stored
+            for c in EMOTION_COLUMNS:
+                values[c] = values.get(c, 0) if has_emotions else None  # EmoTxt not installed or stage skipped
             return DeveloperMonth(project_id=pid, developer_id=dev_id, month=month, **values)
 
         ctx.db.execute(delete(DeveloperMonth).where(DeveloperMonth.project_id == pid))

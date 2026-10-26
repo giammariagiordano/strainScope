@@ -8,3 +8,4 @@ python-dotenv==1.1.0
 pandas==2.2.3
 scipy==1.14.1
 lifelines==0.30.0
+statsmodels==0.14.4

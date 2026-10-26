@@ -28,6 +28,7 @@ from .models import (
     utcnow,
 )
 from . import analysis, survival
+from . import trajectories as trajectories_mod
 from . import projects as project_ops
 from .dataset import LEVELS, VARIABLES, frame
 from .export import build_zip
@@ -101,6 +102,7 @@ def project_summary(s, p: Project) -> dict:
         "error": p.error,
         "created_at": p.created_at.isoformat() + "Z",
         "finished_at": p.finished_at.isoformat() + "Z" if p.finished_at else None,
+        "since": p.since.date().isoformat() if p.since else None,
         "counts": {
             "commits": s.scalar(select(func.count()).select_from(Commit).where(Commit.project_id == p.id)),
             "issues": s.scalar(select(func.count()).select_from(Issue).where(Issue.project_id == p.id)),
@@ -251,6 +253,10 @@ def logs(pid: int, limit: int = 200):
 # -- metrics --------------------------------------------------------------------------
 
 
+PSYCH_SUMS = ("we_words", "i_words", "thanks_received", "replies_received", "negative_emitted", "messages",
+              "anger_emitted", "joy_emitted", "emotion_messages")
+
+
 @app.get("/api/projects/{pid}/overview")
 def overview(pid: int):
     with session_scope() as s:
@@ -286,7 +292,15 @@ def overview(pid: int):
             m["reviews"] += r.reviews
             m["active"] += 1
             m["core"] += r.is_core
+            for k in PSYCH_SUMS:
+                m[k] += getattr(r, k) or 0
         keys = ("commits", "off_hours_commits", "issues", "prs", "comments", "reviews", "active", "core")
+
+        for m in monthly.values():
+            m["pronouns"] = m["we_words"] + m["i_words"]
+
+        def ratio(m, num, den):
+            return round(m[num] / m[den], 3) if m and m[den] else None
         months = month_range(min(monthly), max(monthly)) if monthly else []
         series = [
             {
@@ -297,6 +311,12 @@ def overview(pid: int):
                     if month in monthly and monthly[month]["commits"]
                     else None
                 ),
+                # Psychological climate (app.psych; sentiment): pooled over all human messages of the month.
+                "we_share": ratio(monthly.get(month), "we_words", "pronouns"),
+                "thanks_received_share": ratio(monthly.get(month), "thanks_received", "replies_received"),
+                "negative_share": ratio(monthly.get(month), "negative_emitted", "messages"),
+                "anger_share": ratio(monthly.get(month), "anger_emitted", "emotion_messages"),
+                "joy_share": ratio(monthly.get(month), "joy_emitted", "emotion_messages"),
             }
             for month in months
         ]
@@ -520,7 +540,7 @@ def analysis_frame(s, q: AnalysisQuery, needed: list[str]):
     if unknown:
         raise HTTPException(422, f"Unknown variables for level {q.level}: {unknown}")
     df = frame(s, q.level, q.project_ids or None, max(1, q.abandon_months))
-    if q.min_active_months > 1 and not df.empty:
+    if q.min_active_months > 1 and not df.empty and q.level != "project":
         active = df.groupby(["project", "developer"])["developer"].transform("size") if q.level == "developer_month" else df["active_months"]
         df = df[active >= q.min_active_months]
     return df
@@ -548,7 +568,10 @@ def correlations(q: CorrelationQuery):
         )
     if len(df) < 30:
         warnings.append(f"Only {len(df)} rows: estimates are unstable.")
-    return {**result, "rows": len(df), "developers": int(df[["project", "developer"]].drop_duplicates().shape[0]) if not df.empty else 0,
+    if q.level == "project" and projects < 10:
+        warnings.append(f"Project level with {projects} projects: one row per project, so correlations need many projects.")
+    developers = int(df[["project", "developer"]].drop_duplicates().shape[0]) if not df.empty and "developer" in df else 0
+    return {**result, "rows": len(df), "developers": developers,
             "projects": int(projects), "method": q.method, "controls": q.controls, "level": q.level, "warnings": warnings}  # fmt: skip
 
 
@@ -560,12 +583,38 @@ def scatter(q: ScatterQuery, limit: int = 3000):
     total = len(d)
     if total > limit:
         d = d.sample(limit, random_state=0)
-    label_cols = ["project", "developer"] + (["month"] if q.level == "developer_month" else [])
+    label_cols = ["project"] + ([] if q.level == "project" else ["developer"]) + (["month"] if q.level == "developer_month" else [])
     points = [
         {"x": float(r[q.x]), "y": float(r[q.y]), "label": " · ".join(str(r[c]) for c in label_cols)}
         for _, r in d.iterrows()
     ]
     return {"points": points, "total": total, "sampled": total > limit}
+
+
+# -- trajectories (event time) ---------------------------------------------------
+
+
+class TrajectoryQuery(BaseModel):
+    project_ids: list[int] | None = None
+    abandon_months: int = settings.abandon_months
+    horizon: int = 12
+    bin_size: int = 3
+    min_active_months: int = 3
+    controls: int = 2
+
+
+@app.post("/api/trajectories")
+def trajectory_analysis(q: TrajectoryQuery):
+    """Psychological signals of leavers and matched stayers in the months before (pseudo-)exit, and mixed models."""
+    with session_scope() as s:
+        rows, stats = trajectories_mod.event_time_frame(
+            s, q.project_ids or None, max(1, q.abandon_months), max(2, q.horizon), max(1, q.bin_size),
+            max(2, q.min_active_months), max(1, q.controls),
+        )  # fmt: skip
+    if rows.empty:
+        return {"stats": stats, "trajectories": {}, "models": [], "signals": trajectories_mod.SIGNALS}
+    return {"stats": stats, "trajectories": trajectories_mod.trajectories(rows), "models": trajectories_mod.fit_models(rows),
+            "signals": trajectories_mod.SIGNALS}  # fmt: skip
 
 
 # -- survival ---------------------------------------------------------------------

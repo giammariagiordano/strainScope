@@ -20,6 +20,13 @@ const PEOPLE: SeriesDef[] = [
   { key: "core", label: "Core developers" },
 ];
 const OFF_HOURS: SeriesDef[] = [{ key: "off_hours_share", label: "Off-hours commits", format: fmt.pct }];
+const CLIMATE: SeriesDef[] = [
+  { key: "we_share", label: "Belonging (we-talk)", format: fmt.pct },
+  { key: "thanks_received_share", label: "Gratitude in replies", format: fmt.pct },
+  { key: "negative_share", label: "Negative messages", format: fmt.pct },
+  { key: "anger_share", label: "Anger", format: fmt.pct },
+  { key: "joy_share", label: "Joy", format: fmt.pct },
+];
 
 export default function OverviewTab({ projectId, ready }: { projectId: number; ready: boolean }) {
   const { data, error } = usePoll(() => api.overview(projectId), ready ? 0 : 10000, [projectId, ready]);
@@ -106,6 +113,16 @@ export default function OverviewTab({ projectId, ready }: { projectId: number; r
           <CardHeader title="Off-hours commit share" subtitle="Share of each month's commits made on weekends or outside working hours" />
           <div className="px-3 pb-4 pt-3">
             <MonthlyLines data={monthly} series={OFF_HOURS} percent />
+          </div>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader
+            title="Psychological climate"
+            subtitle="We-words among first-person pronouns, replies by others that thank or appreciate, negative messages (Senti4SD), anger and joy (EmoTxt); pooled over each month's human messages"
+            right={<Legend series={CLIMATE} />}
+          />
+          <div className="px-3 pb-4 pt-3">
+            <MonthlyLines data={monthly} series={CLIMATE} percent />
           </div>
         </Card>
       </div>

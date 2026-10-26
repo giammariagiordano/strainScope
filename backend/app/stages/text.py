@@ -194,6 +194,35 @@ class SentimentStage(TextStage):
         row.sentiment = result["polarity"]
 
 
+class EmotionsStage(TextStage):
+    name = "emotions"
+    label = "Emotions"
+    description = "RoBERTa fine-tuned on Shaver's six emotions (Stack Overflow + GitHub gold standards, augmented); micro-F1 0.62 on GitHub, vs 0.42 for EMTk (docs/EMOTIONS.md)."
+    column = "emotions"
+    empty_value = "-"
+    batch_size = 512
+
+    @staticmethod
+    def paths():
+        base = settings.external_dir
+        return base / "toxbert-venv" / "bin" / "python", base / "roberta-emotions-final"
+
+    def tool_status(self):
+        python, model = self.paths()
+        if not python.exists() or not (model / "thresholds.json").exists():
+            return "emotion model not installed (see docs/EMOTIONS.md)"
+        return None
+
+    def open(self):
+        python, model = self.paths()
+        # bounded GPU memory on Apple silicon: fail instead of exhausting the machine
+        env = {"PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.7", "PYTORCH_MPS_LOW_WATERMARK_RATIO": "0.5"}
+        return ExternalClassifier(python, "emotions_runner.py", str(model), env=env)
+
+    def store(self, row, result):
+        row.emotions = ",".join(result["emotions"])
+
+
 _AT_MENTION = re.compile(r"(?<![\w.])@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 
 

@@ -156,3 +156,21 @@ def test_disengagement_counts_only_exits_without_activity_elsewhere():
     assert run(None) == ([], "unknown_after_exit")
     rows, _ = subject_rows(months, values, 0, 60, K, WINDOW, 1, "abandonment", left_github=False)
     assert [r["stop"] for r in rows if r["event"]] == [3]  # still an abandonment of the project
+
+
+def test_moved_outcome_is_the_competing_cause_of_disengagement():
+    months = np.array([0, 1, 2, 3])
+    values = {c: np.ones(4) for c in ("commits", "comments", "reviews", "centrality", "opened")}
+    values |= {"off_hours_commits": np.zeros(4), "is_core": np.zeros(4)}
+    run = lambda left: subject_rows(months, values, 0, 60, K, WINDOW, 1, "moved", left_github=left)  # noqa: E731
+    assert [r["stop"] for r in run(False)[0] if r["event"]] == [3]  # active elsewhere: the event
+    assert not any(r["event"] for r in run(True)[0])  # left GitHub: censored
+    assert run(None) == ([], "unknown_after_exit")
+
+
+# -- event-time trajectories (RQ1) -----------------------------------------------------------------------
+
+def test_event_time_bins_group_three_months_up_to_the_anchor():
+    import pandas as pd
+    rel = pd.Series([0, -1, -2, -3, -5, -6, -11])
+    assert (-((-rel) // 3) * 3).tolist() == [0, 0, 0, -3, -3, -6, -9]

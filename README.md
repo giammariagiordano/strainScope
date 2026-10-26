@@ -37,7 +37,9 @@ high demands → strain → disengagement.
 | JD-R concept | Observable proxy in the repository |
 |---|---|
 | Demands | Being *core*, belonging to the *truck factor*, working off-hours |
-| Strain | Negative affect, emitted/received toxicity *(milestone M2)* |
+| Strain | Negative affect emitted and received (sentiment) |
+| Resources | Recognition received (gratitude, positive reactions), responses to one's issues/PRs |
+| Identification | Belonging: "we" versus "I" in one's messages |
 | Outcome | Abandonment (inactive ≥ N months at the end of observation); richer break states in M3 |
 
 Unit of analysis: **developer × project × month**.
@@ -52,8 +54,10 @@ before using them in a publication.
 | **Truck factor** | Degree of Authorship (DOA) per file; a developer is an author if normalized DOA > 0.75 and DOA ≥ 3.293; greedily remove the developers authoring the most files until > 50% of files are orphaned | Avelino et al., ICPC 2016 |
 | **Core / peripheral** | Eigenvector centrality on the developer network (collaboration + communication), 3-month sliding window; core = developers covering 80% of cumulative centrality | Joblin et al., ICSE 2017 |
 | **Off-hours** | Share of commits on weekends or outside working hours, in the author's own time zone | Claes et al., ICSE 2018 |
-| Sentiment *(M2)* | Senti4SD / SentiStrength-SE | Calefato et al. 2018; Islam & Zibran 2018 |
-| Toxicity *(M2)* | ToxiCR | Sarker et al., TOSEM 2023 |
+| Sentiment | Senti4SD, learner retrained on the GitHub gold standard (macro-F1 0.89) | Calefato et al. 2018; Novielli et al., MSR 2020 |
+| Toxicity *(paused)* | ToxiCR; conversation-level classifier (docs/TOXICITY.md) | Sarker et al., TOSEM 2023 |
+| **Belonging** | Share of first-person pronouns that are plural ("we", "our", "let's") vs singular ("I", "my") in the developer's messages | Pennebaker's psycholinguistics (LIWC *we*/*i*) |
+| **Recognition** | Gratitude received: replies by other people (not bots) on the developer's issues/PRs that thank or appreciate; 👍 ❤️ 🎉 🚀 reactions received on the developer's items | JD-R (recognition as a resource) |
 | **Abandonment** | Inactive for ≥ `ABANDON_MONTHS` (default 12) before the project's last observed month; right-censored | Threshold approach; see Calefato et al., EMSE 2022 for break states *(M3)* |
 
 DOA: `3.293 + 1.098·FA + 0.164·DL − 0.321·ln(1 + AC)`, where FA = the developer created the file,
@@ -282,8 +286,27 @@ with SQLite a second writer would block on the stage's open transaction.
 
 ## Analysis and export
 
+### Psychological markers
+Dictionary counts on the cleaned text of every human message (quoted replies, code, HTML comments and @mentions
+removed first; English only; `backend/app/psych.py`, tests in `tests/test_psych.py`):
+
+- **Belonging (we-talk)**: plural first-person pronouns (we, us, our, ours, ourselves, we're, we've, we'd, we'll,
+  let's) over all first-person pronouns (plus I, me, my, mine, myself, I'm, I've, I'd, I'll). A drift from "we"
+  to "I" is read as weaker identification with the group. Also per 100 words.
+- **Gratitude expressed / received**: messages with thanks or appreciation ("thanks", "thank you", "appreciate",
+  "kudos", "great work", "nice catch", "well done", 🙏 …). *Received* counts replies by **other people** on the
+  developer's issues and PRs: bots are excluded, since they thank automatically.
+- **Reactions received**: GitHub reactions on the developer's issues, PRs and comments; positive = 👍 ❤️ 🎉 🚀,
+  negative = 👎 😕 ("laugh" and "eyes" are ambiguous and left out). Reviews have no reaction data.
+
+They are *markers* from language and behaviour, not psychological measurements: report them as signals and, when
+possible, validate them against a survey. All of them enter the correlation analysis (with every other metric), the
+survival model (lagged window covariates, off by default) and the project overview (*Psychological climate*).
+
 ### Correlation analysis
-- **Unit of analysis**: *developer* (one row per developer × project, aggregated) or *developer-month* (panel).
+- **Unit of analysis**: *project* (one row per project: size, abandonment, overall climate pooled over all
+  messages, PR merge rate, response time, share of AI PRs), *developer* (one row per developer × project,
+  aggregated) or *developer-month* (panel).
 - **Methods**: Spearman (default, robust for skewed counts) or Pearson. With a binary variable they reduce
   to rank-biserial / point-biserial correlations.
 - **Partial correlation**: pick control variables (e.g. commits, tenure) to remove their linear effect.
@@ -314,6 +337,14 @@ first-order partial-correlation formula.
 Right-censoring: developers who left less than the threshold before the end of observation count as not
 abandoned. One-off contributors trivially "abandon"; use the minimum-active-months filter to exclude them.
 
+### Event-time trajectories (before leaving)
+`backend/app/trajectories.py`, `POST /api/trajectories`, `event_time.csv` in the export. Each developer who abandoned
+a project (≥ 3 active months) is aligned on their last active month and matched with up to two developers of the
+same project who, at a month with similar experience, had not left (active again within the threshold): their
+pseudo-exit. For every psychological signal, a linear mixed model with the 3-month bins before the (pseudo-)exit,
+the group and their interaction, log messages and project as controls, and a random intercept per developer tests
+whether leavers diverge from stayers as the exit approaches (Benjamini-Hochberg across signals).
+
 ### Survival analysis (time to abandonment)
 Counting-process design, one subject per developer × project, time in calendar months since entry:
 
@@ -332,6 +363,9 @@ Counting-process design, one subject per developer × project, time in calendar 
     `post_exit` stage. Developers who move on to other repositories left the *project*, not open source: they
     are censored at their exit (cause-specific hazard). Abandoners who cannot be checked (no GitHub login,
     deleted account, or K < 6) are excluded and counted in the UI.
+  - **Moved elsewhere**: the competing cause of *Left GitHub*: an abandonment followed by contributions to other
+    repositories within 12 months; developers who leave GitHub are censored at their exit. Fitting both gives
+    cause-specific hazards for leaving open source and for moving to other projects.
   - **Any long pause**: every pause of ≥ K months is an event, with or without return. A developer can have
     several (recurrent events, Andersen–Gill), so standard errors should be clustered by person.
 - **Archived repositories** are left out (GitHub's `archived` flag, `repo_info` stage): when a project is shut

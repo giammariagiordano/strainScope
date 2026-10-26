@@ -146,7 +146,7 @@ def registry() -> list[Stage]:
     from .stages.github_items import CommentsStage, IssuesStage, ReviewsStage
     from .stages.identities import IdentitiesStage
     from .stages.structural import StructuralStage
-    from .stages.text import ConversationToxicityStage, SentimentStage, ToxicityStage
+    from .stages.text import ConversationToxicityStage, EmotionsStage, SentimentStage, ToxicityStage
 
     return [
         CloneStage(),
@@ -159,6 +159,7 @@ def registry() -> list[Stage]:
         IdentitiesStage(),
         ToxicityStage(),
         SentimentStage(),
+        EmotionsStage(),
         ConversationToxicityStage(),
         AggregateStage(),
         StructuralStage(),

@@ -6,6 +6,7 @@ import { Button, Card, Empty, ProgressBar, StatusBadge, fmt } from "../component
 
 function AddProjects({ onAdded }: { onAdded: () => void }) {
   const [text, setText] = useState("");
+  const [since, setSince] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const urls = text.split(/[\s,]+/).filter(Boolean);
@@ -14,7 +15,7 @@ function AddProjects({ onAdded }: { onAdded: () => void }) {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await api.addProjects(urls);
+      const r = await api.addProjects(urls, since || null);
       const parts = [];
       if (r.created.length) parts.push(`Queued ${r.created.length} project${r.created.length > 1 ? "s" : ""}`);
       if (r.skipped.length) parts.push(`${r.skipped.length} already present`);
@@ -45,6 +46,27 @@ function AddProjects({ onAdded }: { onAdded: () => void }) {
         placeholder={"https://github.com/pallets/flask\npsf/requests"}
         className="mt-3 w-full resize-y rounded-xl border border-line bg-page px-3.5 py-2.5 font-mono text-sm text-ink placeholder:text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
       />
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <label htmlFor="since" className="text-sm text-ink2">
+          Mine GitHub data from
+        </label>
+        <input
+          id="since"
+          type="date"
+          value={since}
+          onChange={(e) => setSince(e.target.value)}
+          className="rounded-lg border border-line bg-page px-2.5 py-1.5 text-sm text-ink focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent-soft"
+        />
+        {since && (
+          <button type="button" onClick={() => setSince("")} className="text-xs text-muted hover:text-ink">
+            Clear
+          </button>
+        )}
+        <span className="basis-full text-xs text-muted">
+          Optional. Issues, comments, reviews and PR outcomes from this date only (much faster on large projects);
+          the git history is always complete. Empty = everything.
+        </span>
+      </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <span className={msg?.kind === "err" ? "text-sm text-bad" : "text-sm text-ink2"}>{msg?.text}</span>
         <Button variant="primary" onClick={submit} disabled={!urls.length || busy}>
@@ -82,7 +104,10 @@ function ProjectCard({ p, onChange }: { p: ProjectSummary; onChange: () => void 
       <Card className="flex h-full flex-col p-5 transition group-hover:border-accent/40 group-hover:shadow-lg">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="truncate text-xs text-muted">{p.full_name.split("/")[0]}</div>
+            <div className="truncate text-xs text-muted">
+              {p.full_name.split("/")[0]}
+              {p.since && <span title="GitHub API data mined from this date"> · from {p.since}</span>}
+            </div>
             <div className="truncate text-base font-semibold text-ink">{p.full_name.split("/")[1]}</div>
           </div>
           <StatusBadge status={p.status} pausing={p.pause_requested && active} />

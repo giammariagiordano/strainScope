@@ -176,6 +176,9 @@ class Issue(Base):
     toxic: Mapped[int | None] = mapped_column(Integer)
     toxicity_p: Mapped[float | None] = mapped_column(Float)
     sentiment: Mapped[str | None] = mapped_column(String(10))  # positive | neutral | negative | none
+    # EmoTxt emotions of title + body: comma-separated (anger, joy, love, sadness, fear, surprise), "" = none,
+    # "-" = nothing to classify; None = not classified.
+    emotions: Mapped[str | None] = mapped_column(String(60))
     # Whole-conversation toxicity (body + conversation comments): 1 / 0, -1 = nothing to classify. docs/TOXICITY.md
     conv_toxic: Mapped[int | None] = mapped_column(Integer)
     conv_toxicity_score: Mapped[float | None] = mapped_column(Float)
@@ -187,6 +190,9 @@ class Issue(Base):
     # (opened by a person whose description credits an AI tool); None = no declared AI.
     ai_tool: Mapped[str | None] = mapped_column(String(30))
     ai_source: Mapped[str | None] = mapped_column(String(10))
+    # GitHub reactions on the issue/PR description (app.psych.reactions); None = not mined.
+    reactions_pos: Mapped[int | None] = mapped_column(Integer)
+    reactions_neg: Mapped[int | None] = mapped_column(Integer)
 
     __table_args__ = (UniqueConstraint("project_id", "number"),)
 
@@ -206,7 +212,11 @@ class Comment(Base):
     toxic: Mapped[int | None] = mapped_column(Integer)  # 1 / 0, -1 = nothing to classify
     toxicity_p: Mapped[float | None] = mapped_column(Float)
     sentiment: Mapped[str | None] = mapped_column(String(10))
+    emotions: Mapped[str | None] = mapped_column(String(60))  # as Issue.emotions
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # GitHub reactions on the comment (app.psych.reactions); None = not mined (and for reviews, not available).
+    reactions_pos: Mapped[int | None] = mapped_column(Integer)
+    reactions_neg: Mapped[int | None] = mapped_column(Integer)
 
     __table_args__ = (UniqueConstraint("project_id", "kind", "gh_id"),)
 
@@ -235,6 +245,28 @@ class DeveloperMonth(Base):
     negative_received: Mapped[int | None] = mapped_column(Integer)
     threads: Mapped[int | None] = mapped_column(Integer)  # conversations the developer wrote in this month
     toxic_threads: Mapped[int | None] = mapped_column(Integer)  # ... of which classified as toxic conversations
+    # Psycholinguistic markers (app.psych) of the developer's own messages ...
+    psych_messages: Mapped[int | None] = mapped_column(Integer)  # human messages with at least one word
+    words: Mapped[int | None] = mapped_column(Integer)
+    we_words: Mapped[int | None] = mapped_column(Integer)
+    i_words: Mapped[int | None] = mapped_column(Integer)
+    thanks_emitted: Mapped[int | None] = mapped_column(Integer)  # messages expressing gratitude
+    # ... and of what others (humans) write on the developer's issues/PRs, and react to the developer's items.
+    replies_received: Mapped[int | None] = mapped_column(Integer)
+    thanks_received: Mapped[int | None] = mapped_column(Integer)
+    reacted_items: Mapped[int | None] = mapped_column(Integer)  # own issues/PRs/comments with reaction data
+    reactions_pos_received: Mapped[int | None] = mapped_column(Integer)
+    reactions_neg_received: Mapped[int | None] = mapped_column(Integer)
+    # Emotions (EmoTxt) of the developer's messages, and anger in what others write on the developer's issues/PRs.
+    emotion_messages: Mapped[int | None] = mapped_column(Integer)  # classified messages
+    anger_emitted: Mapped[int | None] = mapped_column(Integer)
+    joy_emitted: Mapped[int | None] = mapped_column(Integer)
+    love_emitted: Mapped[int | None] = mapped_column(Integer)
+    sadness_emitted: Mapped[int | None] = mapped_column(Integer)
+    fear_emitted: Mapped[int | None] = mapped_column(Integer)
+    surprise_emitted: Mapped[int | None] = mapped_column(Integer)
+    emotion_received: Mapped[int | None] = mapped_column(Integer)
+    anger_received: Mapped[int | None] = mapped_column(Integer)
     centrality: Mapped[float] = mapped_column(Float, default=0.0)
     degree: Mapped[int] = mapped_column(Integer, default=0)
     is_core: Mapped[bool] = mapped_column(Boolean, default=False)

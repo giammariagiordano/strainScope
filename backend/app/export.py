@@ -13,6 +13,7 @@ from .config import settings
 from .dataset import DEVELOPER_MONTH_VARS, DEVELOPER_VARS, developer_frame, developer_month_frame
 from .survival import COVARIATES as SURVIVAL_COVARIATES
 from .survival import build_intervals
+from .trajectories import SIGNALS, event_time_frame
 from .models import Comment, Commit, Developer, Issue, Project, ProjectMetric
 
 ID_COLUMNS = {
@@ -116,6 +117,15 @@ def codebook() -> str:
     lines += [f"| `{c.key}` | {c.description} |" for c in SURVIVAL_COVARIATES]
     lines += [
         "",
+        "## event_time.csv — psychological signals before (pseudo-)exit",
+        "",
+        "Active developer-months of developers who abandoned a project (`group` = leaver, anchored on their last active",
+        "month) and of up to two matched developers of the same project who had not left at a month with similar",
+        "experience (`group` = stayer, anchored on that pseudo-exit). `set` identifies a leaver and their matches; `rel`",
+        "is the month relative to the anchor (0 = anchor, last 12 months) and `bin` its 3-month bin. Fit e.g. a mixed model",
+        "`signal ~ factor(bin) * group + log_messages + (1 | project:developer)` (R lme4) or statsmodels `mixedlm`.",
+        "Signals are as in developer_months.csv.",
+        "",
         "## Parameters",
         f"- Working hours: {settings.work_hours[0]}:00–{settings.work_hours[1]}:00, Monday–Friday, author's local time.",
         f"- Core threshold: {settings.core_threshold:.0%} of cumulative eigenvector centrality (Joblin et al., ICSE 2017).",
@@ -135,6 +145,9 @@ def build_zip(db: Session, project_ids: list[int] | None) -> bytes:
     intervals, _ = build_intervals(db, project_ids, settings.abandon_months, window=3, min_active_months=1, outcome="abandonment")
     # `person` holds the GitHub login used for clustering: never exported.
     intervals = intervals.drop(columns=["sid", "person"], errors="ignore")
+    events, _ = event_time_frame(db, project_ids, settings.abandon_months)
+    if not events.empty:
+        events = events[["project", "developer", "group", "set", "month", "rel", "bin", "log_messages", *SIGNALS]]
     meta = {
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "tool": "StrainScope",
@@ -144,6 +157,7 @@ def build_zip(db: Session, project_ids: list[int] | None) -> bytes:
             "developers": len(devs),
             "developer_months": len(months),
             "survival_intervals": len(intervals),
+            "event_time": len(events),
         },
         "parameters": {
             "work_hours": list(settings.work_hours),
@@ -158,6 +172,7 @@ def build_zip(db: Session, project_ids: list[int] | None) -> bytes:
         z.writestr("developers.csv", devs.to_csv(index=False, float_format="%.6g"))
         z.writestr("developer_months.csv", months.to_csv(index=False, float_format="%.6g"))
         z.writestr("survival_intervals.csv", intervals.to_csv(index=False, float_format="%.6g"))
+        z.writestr("event_time.csv", events.to_csv(index=False, float_format="%.6g"))
         z.writestr("codebook.md", codebook())
         z.writestr("metadata.json", json.dumps(meta, indent=2))
     return buf.getvalue()

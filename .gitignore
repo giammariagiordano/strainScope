@@ -7,3 +7,13 @@ frontend/dist/
 .DS_Store
 *.tsbuildinfo
 external/
+# LaTeX build files of the paper
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.fdb_latexmk
+paper/*.fls
+paper/*.log
+paper/*.out
+paper/main.pdf
+paper/build.log

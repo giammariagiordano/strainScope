@@ -17,6 +17,8 @@ export interface ProjectSummary {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+  /** GitHub API data mined from this date (YYYY-MM-DD); null = full history. */
+  since: string | null;
   counts: { commits: number; issues: number; developers: number };
 }
 
@@ -55,6 +57,12 @@ export interface MonthPoint {
   active: number;
   core: number;
   off_hours_share: number | null;
+  /** Psychological climate, pooled over the month's human messages; null without data. */
+  we_share: number | null;
+  thanks_received_share: number | null;
+  negative_share: number | null;
+  anger_share: number | null;
+  joy_share: number | null;
 }
 
 export interface Overview {
@@ -139,7 +147,7 @@ export interface Status {
   real_identities: boolean;
 }
 
-export type Level = "developer" | "developer_month";
+export type Level = "project" | "developer" | "developer_month";
 export type Method = "spearman" | "pearson";
 
 export interface VariableDef {
@@ -315,8 +323,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   projects: () => request<ProjectSummary[]>("/projects"),
   project: (id: number) => request<ProjectDetail>(`/projects/${id}`),
-  addProjects: (urls: string[]) =>
-    request<{ created: string[]; skipped: string[] }>("/projects", { method: "POST", body: JSON.stringify({ urls }) }),
+  addProjects: (urls: string[], since: string | null = null) =>
+    request<{ created: string[]; skipped: string[] }>("/projects", { method: "POST", body: JSON.stringify({ urls, since }) }),
   pause: (id: number) => request(`/projects/${id}/pause`, { method: "POST" }),
   resume: (id: number) => request(`/projects/${id}/resume`, { method: "POST" }),
   rerun: (id: number, stage: string) => request(`/projects/${id}/rerun/${stage}`, { method: "POST" }),

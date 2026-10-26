@@ -203,7 +203,12 @@ class GitHubClient:
                 continue
             if r.status_code >= 400:
                 raise GitHubError(f"POST /graphql -> {r.status_code}: {r.text[:300]}")
-            body = r.json()
+            try:
+                body = r.json()
+            except ValueError:  # an empty or HTML body (proxy or timeout page) despite a 2xx status
+                log.warning("GraphQL answered %s with a non-JSON body (attempt %s)", r.status_code, attempt)
+                time.sleep(2**attempt)
+                continue
             if body.get("errors"):
                 if any(e.get("type") == "RATE_LIMITED" for e in body["errors"]):
                     tok.gql_remaining = 0

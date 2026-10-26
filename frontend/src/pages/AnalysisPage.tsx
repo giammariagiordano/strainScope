@@ -15,11 +15,18 @@ import { Section, Segmented } from "../components/controls";
 import { Card, CardHeader, Empty, cx, fmt } from "../components/ui";
 
 const DEFAULTS: Record<Level, string[]> = {
-  developer: [
-    "core_share", "truck_factor_member", "mean_centrality", "off_hours_share",
-    "commits_per_month", "comments", "reviews", "tenure_months", "abandoned",
+  project: [
+    "truck_factor", "abandonment_rate", "moved_elsewhere_share", "off_hours_share", "negative_emitted_share",
+    "we_share", "thanks_received_share", "reactions_pos_per_item", "anger_share", "joy_share", "response_days",
   ],
-  developer_month: ["is_core", "centrality", "off_hours_share", "commits", "comments", "reviews", "exit"],
+  developer: [
+    "core_share", "truck_factor_member", "mean_centrality", "off_hours_share", "commits_per_month",
+    "tenure_months", "negative_emitted_share", "anger_share", "joy_share", "we_share", "thanks_received_share", "abandoned",
+  ],
+  developer_month: [
+    "is_core", "centrality", "off_hours_share", "commits", "comments", "reviews",
+    "we_share", "thanks_received", "exit",
+  ],
 }; // prettier-ignore
 
 const fmtP = (p: number | null | undefined) =>
@@ -297,6 +304,7 @@ export default function AnalysisPage() {
               value={level}
               onChange={changeLevel}
               options={[
+                { id: "project", label: "Project" },
                 { id: "developer", label: "Developer" },
                 { id: "developer_month", label: "Developer-month" },
               ]}

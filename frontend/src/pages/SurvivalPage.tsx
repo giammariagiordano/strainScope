@@ -206,6 +206,7 @@ export default function SurvivalPage() {
               options={[
                 { id: "abandonment", label: "Abandonment" },
                 { id: "disengagement", label: "Left GitHub" },
+                { id: "moved", label: "Moved elsewhere" },
                 { id: "break", label: "Any long pause" },
               ]}
             />
@@ -214,6 +215,8 @@ export default function SurvivalPage() {
                 ? "Stops and never comes back. Pauses followed by a return are not events, however long."
                 : outcome === "disengagement"
                   ? "Abandons and shows no public GitHub activity elsewhere in the next 12 months. Those who move to other repositories are censored at their exit; unchecked accounts are excluded."
+                  : outcome === "moved"
+                  ? "Abandons and contributes to other GitHub repositories in the next 12 months. Those who leave GitHub are censored at their exit (the competing cause); unchecked accounts are excluded."
                   : `Every pause of ≥ ${abandon} months is an event, whether the developer returns or not (recurrent).`}
             </p>
           </Section>
@@ -300,10 +303,12 @@ export default function SurvivalPage() {
             <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
               <StatTile label="Developers at risk" value={fmt.int(ds.at_risk_subjects)} hint={`of ${fmt.int(ds.subjects)} developers`} />
               <StatTile
-                label={outcome === "abandonment" ? "Abandonments" : outcome === "disengagement" ? "Left GitHub" : "Long pauses"}
+                label={outcome === "abandonment" ? "Abandonments" : outcome === "disengagement" ? "Left GitHub" : outcome === "moved" ? "Moved elsewhere" : "Long pauses"}
                 value={fmt.int(ds.events)}
                 hint={
-                  outcome === "disengagement"
+                  outcome === "moved"
+                    ? `${ds.abandonments} left GitHub (censored) · ${ds.unknown_after_exit} unchecked (excluded)`
+                    : outcome === "disengagement"
                     ? `${ds.moved_elsewhere} moved to other repositories (censored) · ${ds.unknown_after_exit} unchecked (excluded)`
                     : outcome === "abandonment"
                     ? `${ds.breaks_with_return} long pauses with return not counted · ${ds.moved_elsewhere} still active elsewhere`
@@ -465,7 +470,7 @@ export default function SurvivalPage() {
                 </p>
                 <p>
                   {outcome !== "break"
-                    ? `${outcome === "disengagement" ? "Left GitHub = abandonment followed by 12 months without public GitHub activity elsewhere; those who move on to other repositories are censored at their exit. " : ""}Abandonment = the developer never comes back. Because the future is unknown, a final silence counts only when it lasts at least ${abandon} months before the end of the data; more recent exits are censored.`
+                    ? `${outcome === "disengagement" ? "Left GitHub = abandonment followed by 12 months without public GitHub activity elsewhere; those who move on to other repositories are censored at their exit. " : outcome === "moved" ? "Moved elsewhere = abandonment followed by contributions to other repositories within 12 months; those who leave GitHub are censored at their exit. " : ""}Abandonment = the developer never comes back. Because the future is unknown, a final silence counts only when it lasts at least ${abandon} months before the end of the data; more recent exits are censored.`
                     : `Long pause = at least ${abandon} months without activity, with or without return. A developer can have several pauses (recurrent events), so standard errors should be clustered by person.`}{" "}
                   Covariates for month t summarize months t−{window}…t−1.
                 </p>

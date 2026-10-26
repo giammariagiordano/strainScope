@@ -6,6 +6,7 @@ from sqlalchemy import func, select
 
 from ..models import Comment, Issue
 from ..pipeline import Stage, StageContext
+from ..psych import reactions
 
 
 def ts(value: str | None) -> datetime | None:
@@ -32,12 +33,18 @@ def upsert_issue(ctx: StageContext, it: dict):
         closed_at=ts(it.get("closed_at")),
         comments_count=it.get("comments"),
     )
+    fields["reactions_pos"], fields["reactions_neg"] = reactions(it.get("reactions"))
     row = ctx.db.scalar(select(Issue).where(Issue.project_id == ctx.project.id, Issue.number == it["number"]))
     if row is None:
         ctx.db.add(Issue(project_id=ctx.project.id, number=it["number"], **fields))
     else:
         for k, v in fields.items():
             setattr(row, k, v)
+
+
+def comment_reactions(it: dict) -> dict:
+    pos, neg = reactions(it.get("reactions"))
+    return {"reactions_pos": pos, "reactions_neg": neg}
 
 
 def upsert_comment(ctx: StageContext, kind: str, gh_id: int, **fields):
@@ -154,6 +161,7 @@ class CommentsStage(Stage):
                         body=it.get("body"),
                         created_at=ts(it["created_at"]),
                         updated_at=ts(it.get("updated_at")),
+                        **comment_reactions(it),
                     )  # fmt: skip
                     ctx.cursor[kind] = it["updated_at"]
                 count = ctx.db.scalar(select(func.count()).select_from(Comment).where(Comment.project_id == pid))
@@ -190,6 +198,7 @@ class CommentsStage(Stage):
                         body=it.get("body"),
                         created_at=ts(it["created_at"]),
                         updated_at=ts(it.get("updated_at")),
+                        **comment_reactions(it),
                     )  # fmt: skip
             after = ctx.db.scalar(
                 select(func.count()).select_from(Comment).where(
