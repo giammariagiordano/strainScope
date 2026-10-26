@@ -11,7 +11,9 @@ below comes from a script in `backend/scripts/toxicity/` and can be regenerated 
 | 2026-10-23 | ToxiCR on GitHub issue comments (STRUDEL dataset, Raman et al. 2020: 1,597 comments, 101 toxic) | P 0.54, R 0.28, F1 0.37; retraining on 101 toxic examples fails (F1 0.00). |
 | 2026-10-23 | Literature search for GitHub-validated detectors | Most evaluations use "heated" threads (6–28% toxic). Only the ASE 2026 study evaluates at the natural rate (0.76%). |
 | 2026-10-23 | Unit of measurement changed from **developer** to **conversation / community** | Matches the available labels (conversation level), avoids labelling individuals as toxic, and corresponds to a community climate (cf. the *Black Cloud* smell). |
-| 2026-10-23 | Train a BERT-family classifier on the ASE 2026 data, validate at the natural rate | This document. |
+| 2026-10-23 | Train a BERT-family classifier on the ASE 2026 data, validate at the natural rate | Sections 3–6. |
+| 2026-10-26 | StrainScope has only 5,985 conversations with human text (88 repositories): the ASE pipeline itself (LLM + verifier + human review) is affordable on them | Section 7. The fine-tuned classifier is kept as a baseline and for larger samples. |
+| 2026-10-26 | **Toxicity work paused.** Measured cost: Ministral-3-14B on the 16 GB M1 is estimated at 15–30 s per conversation (≈ 25–50 h for StrainScope, 4–7 h for the validation), plus human review; with ~45 toxic conversations expected the covariates would have little statistical power. | Nothing run beyond the scripts' dry run. Strain is measured by sentiment (Senti4SD). The pipeline runs without toxicity: ToxiCR is off, `conversation_toxicity` skips itself without a model, the toxicity covariates are off by default. To resume: section 7, starting with the validation on the 898 human-labelled conversations. |
 
 ### Detectors considered
 
@@ -103,3 +105,32 @@ TF-IDF illustrates the base-rate problem: reasonable on the heated sample (F1 0.
 | Hardware | Apple M1, 16 GB, PyTorch 2.5.1 MPS backend; inference batches of 8 windows (32 ran out of GPU memory) | — |
 
 <!-- results of zero-shot Detoxify and of the fine-tuned model are added below by the next steps -->
+
+## 7. Labelling StrainScope's conversations with the ASE pipeline (paused, not run)
+
+With ~6,000 conversations the classifier is not needed to make labelling affordable: the pipeline that produced the
+reference labels can be applied directly, so StrainScope's labels have the same definition and the same quality
+control as the data, and are human-checked where the verifier doubts the LLM.
+
+| Step | Script | What it does |
+|---|---|---|
+| Export | `export_conversations.py` (backend venv) | Conversations built exactly as the `conversation_toxicity` stage builds them (`conversation_text`): body + conversation comments, human authors, `P1:`… speakers, `@user` mentions. 5,985 conversations from 88 repositories; median 890 characters, p99 15,498. |
+| LLM | `llm_label.py` (toxbert-venv, Ollama) | Ministral-3-14B (`ministral-3:14b`, Q4_K_M, 9.1 GB) with the package's category prompt verbatim: toxicity label, explanation, eight event-category scores. Resumable JSON lines. |
+| Verifier | `verify_labels.py` (toxbert-venv) | The package's random forest and scaler (scikit-learn 1.5.2) estimate whether each LLM label is correct; p < 0.5 → `<name>_review.csv` for human review. |
+| Review | by hand | Fill `human_label` for the flagged conversations; the final label is the human one where present, the LLM's otherwise. |
+
+**Deviations from the package**, which does not record its inference settings: temperature 0 and seed 13
+(reproducibility); JSON-schema constrained decoding (every reply parses); conversations cut at 20,000 characters so
+prompt + conversation fit in an 8,192-token context on a 16 GB machine (> 99% of conversations are not cut; cut ones
+are flagged).
+
+**Validation of the local setup.** Before labelling StrainScope, the same scripts run on the 898 human-labelled
+conversations, which the package also labelled with Ministral: agreement with the package's predictions shows
+whether quantization and settings reproduce its LLM, and agreement with the humans gives the quality to report.
+Reference, from the package's own outputs on those 898 conversations: LLM alone P 0.98, R 0.62, F1 0.76
+(κ 0.71); after reviewing the 77 conversations (8.6%) the verifier flags, F1 0.98. The latter is optimistic: the
+verifier was trained on these same conversations.
+
+**Statistical power.** At the natural rate (~0.75%) about 45 of the 5,985 conversations are expected to be toxic.
+Per-developer exposure (`toxic_threads`) will be zero for almost every developer-month; `community_toxicity` is the
+more usable variable, and toxicity results should be presented as exploratory unless the sample grows.

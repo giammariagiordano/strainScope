@@ -197,6 +197,20 @@ class SentimentStage(TextStage):
 _AT_MENTION = re.compile(r"(?<![\w.])@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
 
 
+def conversation_text(issue: Issue, comments: list[Comment], bots: set[int]) -> str:
+    """Issue/PR body then conversation comments (chronological), human authors only, raw text, speakers as
+    P1, P2, ... and @mentions as @user; empty if no human wrote anything."""
+    turns = [(issue.alias_id, issue.body)] + [(c.alias_id, c.body) for c in comments]
+    speakers: dict[int, str] = {}
+    lines = []
+    for alias, body in turns:
+        if alias is None or alias in bots or not (body or "").strip():
+            continue
+        speakers.setdefault(alias, f"P{len(speakers) + 1}")
+        lines.append(f"{speakers[alias]}: {_AT_MENTION.sub('@user', body)}")
+    return "\n".join(lines)
+
+
 class ConversationToxicityStage(Stage):
     """Toxicity of whole conversations, the unit the classifier was trained and validated on (docs/TOXICITY.md).
 
@@ -239,16 +253,9 @@ class ConversationToxicityStage(Stage):
             comments.setdefault(c.issue_number, []).append(c)
         work = []
         for issue in issues:
-            turns = [(issue.alias_id, issue.body)] + [(c.alias_id, c.body) for c in comments.get(issue.number, [])]
-            speakers: dict[int, str] = {}
-            lines = []
-            for alias, body in turns:
-                if alias is None or alias in bots or not (body or "").strip():
-                    continue
-                speakers.setdefault(alias, f"P{len(speakers) + 1}")
-                lines.append(f"{speakers[alias]}: {_AT_MENTION.sub('@user', body)}")
-            if lines:
-                work.append((issue, "\n".join(lines)))
+            text = conversation_text(issue, comments.get(issue.number, []), bots)
+            if text:
+                work.append((issue, text))
             else:
                 issue.conv_toxic = -1
         ctx.progress(len(issues) - len(work), len(issues), f"{len(work)} conversations to classify")
