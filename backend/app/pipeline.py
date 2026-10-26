@@ -130,6 +130,9 @@ class Stage:
     name: str = ""
     label: str = ""
     description: str = ""
+    # Exclusive stages load large local models (GPU/CPU memory): the worker runs one of them at a time across
+    # the projects it processes in parallel.
+    exclusive: bool = False
 
     def run(self, ctx: StageContext) -> None:  # pragma: no cover - interface
         raise NotImplementedError

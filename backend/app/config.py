@@ -27,6 +27,9 @@ class Settings:
     pseudonym_salt: str | None = os.getenv("PSEUDONYM_SALT")
     show_real_identities: bool = os.getenv("SHOW_REAL_IDENTITIES", "false").lower() in ("1", "true", "yes")
     heartbeat_timeout_s: int = int(os.getenv("HEARTBEAT_TIMEOUT_S", "120"))
+    # Projects one worker runs at the same time (threads). Mining is bound by the shared GitHub quota, but git,
+    # aggregation and network metrics are local, so a few projects in parallel finish sooner.
+    worker_concurrency: int = max(1, int(os.getenv("WORKER_CONCURRENCY", "3")))
     # ToxiCR has not been validated on GitHub issue/PR comments (in-domain precision was near zero on a
     # sample), so its stage is off until enabled explicitly.
     enable_toxicity: bool = os.getenv("ENABLE_TOXICITY", "false").lower() in ("1", "true", "yes")

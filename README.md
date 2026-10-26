@@ -492,6 +492,7 @@ Environment variables (a `.env` file in `backend/` is also read):
 | `CORE_THRESHOLD` | `0.8` | Share of cumulative centrality defining core developers |
 | `NETWORK_WINDOW_MONTHS` | `3` | Network window width |
 | `ABANDON_MONTHS` | `12` | Inactivity threshold for abandonment (overridable per analysis in the UI) |
+| `WORKER_CONCURRENCY` | `3` | Projects the worker mines at the same time (threads); text-classification stages, which load large models, take turns |
 | `PSEUDONYM_SALT` | random, stored in `app_state` | Salt for pseudonyms |
 | `SHOW_REAL_IDENTITIES` | `false` | Show real names in the UI (local use only) |
 

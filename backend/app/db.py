@@ -9,7 +9,8 @@ is_sqlite = settings.database_url.startswith("sqlite")
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False, "timeout": 30} if is_sqlite else {},
+    # Several projects may write at once (worker threads): wait for the write lock rather than fail.
+    connect_args={"check_same_thread": False, "timeout": 120} if is_sqlite else {},
     pool_pre_ping=True,
 )
 

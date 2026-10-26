@@ -78,6 +78,8 @@ class ExternalClassifier:
 class TextStage(Stage):
     """Classify every issue (title + body), comment and review body that has no score yet."""
 
+    exclusive = True
+
     column = ""  # Issue/Comment column holding the result
     empty_value: object = None
     batch_size = 256
@@ -241,6 +243,8 @@ def conversation_text(issue: Issue, comments: list[Comment], bots: set[int]) -> 
 
 
 class ConversationToxicityStage(Stage):
+    exclusive = True
+
     """Toxicity of whole conversations, the unit the classifier was trained and validated on (docs/TOXICITY.md).
 
     A conversation is rebuilt like the training data: the issue/PR body followed by the conversation comments
