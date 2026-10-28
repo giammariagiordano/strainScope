@@ -17,3 +17,6 @@ paper/*.log
 paper/*.out
 paper/main.pdf
 paper/build.log
+
+# Other papers kept locally as examples (not part of the tool)
+example paper/
