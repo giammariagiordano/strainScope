@@ -299,6 +299,14 @@ export interface TokenInfo {
   checked_at?: string | null;
 }
 
+export interface EmotionSettings {
+  backend: "roberta" | "openai";
+  model: string;
+  key_source: "ui" | "env" | null;
+  key_last4: string | null;
+  labelled_texts: number;
+}
+
 export function exportUrl(projectIds?: number[]) {
   return projectIds?.length ? `/api/export?project_ids=${projectIds.join(",")}` : "/api/export";
 }
@@ -341,6 +349,13 @@ export const api = {
     request<TokenInfo>("/settings/tokens", { method: "POST", body: JSON.stringify({ token }) }),
   checkToken: (id: number) => request<TokenInfo>(`/settings/tokens/${id}/check`, { method: "POST" }),
   removeToken: (id: number) => request(`/settings/tokens/${id}`, { method: "DELETE" }),
+  emotionSettings: () => request<EmotionSettings>("/settings/emotions"),
+  setEmotionSettings: (backend: EmotionSettings["backend"], model?: string) =>
+    request<EmotionSettings>("/settings/emotions", { method: "PUT", body: JSON.stringify({ backend, model }) }),
+  setOpenAIKey: (key: string) =>
+    request<EmotionSettings>("/settings/emotions/key", { method: "POST", body: JSON.stringify({ key }) }),
+  reclassifyEmotions: () => request<{ queued: number; running: number }>("/settings/emotions/reclassify", { method: "POST" }),
+  removeOpenAIKey: () => request<EmotionSettings>("/settings/emotions/key", { method: "DELETE" }),
   variables: () =>
     request<{ defaults: { abandon_months: number }; levels: Record<Level, VariableDef[]> }>("/analysis/variables"),
   correlations: (q: AnalysisQuery & { method: Method; variables: string[]; controls: string[] }) =>

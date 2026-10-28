@@ -35,6 +35,10 @@ class Settings:
     enable_toxicity: bool = os.getenv("ENABLE_TOXICITY", "false").lower() in ("1", "true", "yes")
     # External text classifiers (installed outside the repository, see README "Text classification").
     external_dir: Path = field(default_factory=lambda: Path(os.getenv("EXTERNAL_DIR", BACKEND_DIR.parent / "external")).resolve())
+    # Emotion classifier: "roberta" (local, default) or "openai" (texts are sent to the OpenAI API, see
+    # docs/EMOTIONS.md). Labels from different backends must not be mixed in one dataset.
+    emotion_backend: str = os.getenv("EMOTION_BACKEND", "roberta").lower()
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-6-luna")
 
     def __post_init__(self):
         if not self.database_url:

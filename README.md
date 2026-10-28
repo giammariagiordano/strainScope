@@ -493,6 +493,9 @@ Environment variables (a `.env` file in `backend/` is also read):
 | `NETWORK_WINDOW_MONTHS` | `3` | Network window width |
 | `ABANDON_MONTHS` | `12` | Inactivity threshold for abandonment (overridable per analysis in the UI) |
 | `WORKER_CONCURRENCY` | `3` | Projects the worker mines at the same time (threads); text-classification stages, which load large models, take turns |
+| `EMOTION_BACKEND` | `roberta` | Emotion classifier: `roberta` (local) or `openai` (**texts are sent to the OpenAI API**; see docs/EMOTIONS.md §7) |
+| `OPENAI_MODEL` | `gpt-6-luna` | OpenAI model used when `EMOTION_BACKEND=openai` |
+| `OPENAI_API_KEY` | — | OpenAI key, needed only when `EMOTION_BACKEND=openai` |
 | `PSEUDONYM_SALT` | random, stored in `app_state` | Salt for pseudonyms |
 | `SHOW_REAL_IDENTITIES` | `false` | Show real names in the UI (local use only) |
 

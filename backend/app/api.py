@@ -32,6 +32,7 @@ from . import trajectories as trajectories_mod
 from . import projects as project_ops
 from .dataset import LEVELS, VARIABLES, frame
 from .export import build_zip
+from . import emotion_settings
 from . import tokens as token_store
 from .github import read_rate_state
 from .pipeline import ProjectRef, ensure_stage_runs, registry, stage_names
@@ -773,6 +774,92 @@ def delete_token(tid: int):
             raise HTTPException(404, "Token not found")
         s.delete(t)
     return {"ok": True}
+
+
+# -- settings: emotion classifier -----------------------------------------------------
+
+
+def _emotions_out() -> dict:
+    cfg = emotion_settings.current()
+    with session_scope() as s:
+        labelled = sum(
+            s.scalar(select(func.count()).select_from(m).where(m.emotions.is_not(None), m.emotions != "-")) or 0
+            for m in (Issue, Comment)
+        )
+    return {
+        "backend": cfg.backend,
+        "model": cfg.model,
+        "key_source": cfg.key_source,
+        "key_last4": cfg.api_key[-4:] if cfg.api_key else None,
+        "labelled_texts": labelled,
+    }
+
+
+@app.get("/api/settings/emotions")
+def get_emotion_settings():
+    """Never returns the key: only its last 4 characters."""
+    return _emotions_out()
+
+
+class EmotionChoice(BaseModel):
+    backend: str
+    model: str | None = None
+
+
+@app.put("/api/settings/emotions")
+def set_emotion_settings(body: EmotionChoice):
+    if body.backend not in emotion_settings.BACKENDS:
+        raise HTTPException(422, f"Unknown classifier {body.backend!r}")
+    model = (body.model or "").strip() or None
+    if model and not re.fullmatch(r"[\w.:-]{1,100}", model):
+        raise HTTPException(422, "Invalid model name")
+    if body.backend == "openai" and not emotion_settings.current().api_key:
+        raise HTTPException(422, "Add an OpenAI API key first")
+    emotion_settings.save(backend=body.backend, model=model)
+    return _emotions_out()
+
+
+class NewKey(BaseModel):
+    key: str
+
+
+@app.post("/api/settings/emotions/key")
+def set_openai_key(body: NewKey):
+    key = body.key.strip()
+    if not key or any(c.isspace() for c in key) or len(key) > 400:
+        raise HTTPException(422, "Paste a single OpenAI API key")
+    try:
+        emotion_settings.check(key, emotion_settings.current().model)
+    except emotion_settings.InvalidKey as e:
+        raise HTTPException(422, str(e))
+    emotion_settings.save(api_key=key)
+    return _emotions_out()
+
+
+@app.post("/api/settings/emotions/reclassify")
+def reclassify_emotions():
+    """Re-run the Emotions stage (and every later stage) on all projects that are not running. The stage itself
+    clears labels made by a different classifier; texts already labelled by the current one are kept."""
+    queued, busy = 0, 0
+    with session_scope() as s:
+        ids = [p.id for p in s.scalars(select(Project).where(Project.status != "deleting"))]
+        running = {p.id for p in s.scalars(select(Project).where(Project.status == "running"))}
+    for pid in ids:
+        if pid in running:
+            busy += 1
+        else:
+            rerun(pid, "emotions")
+            queued += 1
+    return {"queued": queued, "running": busy}
+
+
+@app.delete("/api/settings/emotions/key")
+def delete_openai_key():
+    """Removing the key also switches back to the local classifier, unless a key is set in the environment."""
+    emotion_settings.save(api_key=None)
+    if emotion_settings.current().api_key is None:
+        emotion_settings.save(backend="roberta")
+    return _emotions_out()
 
 
 # -- frontend (production build) -----------------------------------------------------

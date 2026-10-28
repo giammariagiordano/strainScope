@@ -4,8 +4,25 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
       "port": 5173
+    },
+    {
+      "name": "api",
+      "runtimeExecutable": "backend/.venv/bin/uvicorn",
+      "runtimeArgs": [
+        "--app-dir",
+        "backend",
+        "app.api:app",
+        "--port",
+        "8000"
+      ],
+      "port": 8000
     }
   ]
 }

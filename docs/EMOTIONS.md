@@ -121,3 +121,33 @@ emotions-venv/bin/python ../backend/scripts/emotions/validate_github.py roberta-
 Data: `external/emotxt-gold/` (SO gold, github.com/collab-uniba/EmotionDatasetMSR18), `external/gh-emotions/`
 (github.com/vcu-swim-lab/SE-Emotion-Study), `external/gold/github_gold.csv` (MSR 2020). Neither emotion dataset
 states a licence: cite the papers and do not redistribute them.
+
+## 7. OpenAI models (`EMOTION_BACKEND=openai`)
+
+Alternative to the local RoBERTa: an OpenAI model (default `gpt-6-luna`, set with `OPENAI_MODEL`) labels each text
+through the Responses API (`app/tools/openai_emotions_runner.py`).
+
+- **Texts leave the machine.** Every cleaned comment is sent to OpenAI; check that this fits the study's ethics
+  approval and data-management plan before enabling it on the full sample.
+- **Prompt:** Shaver's six emotions with their subordinate categories (anger includes irritation and frustration, as
+  in the gold standards), one text per request, answer constrained to a JSON schema of six booleans. Optional
+  labelled examples (`openai-emotions/examples.json`) come from GitHub-train only, never from validation or test.
+- **Replicability:** every answer is cached in `external/openai-emotions/cache-<model>.jsonl`, keyed by model,
+  prompt and text: re-runs cost nothing and the labels can be audited. Refusals and failed calls are not stored, so
+  those texts stay unclassified and are retried on the next run. Report the exact model snapshot in the paper.
+- **Do not mix backends:** labels from RoBERTa and from an OpenAI model are not comparable; switch backend only
+  before classifying a dataset, or reset the `emotions` column of issues and comments.
+- **Cost:** about 550 input and 20 output tokens per text; at the published gpt-6-luna prices ($0.10 / $0.50 per
+  million tokens) roughly $6 per 100,000 texts.
+
+Evaluation on the same data as the local models (validation first, test once):
+
+```bash
+cd external
+OPENAI_API_KEY=... emotions-venv/bin/python ../backend/scripts/emotions/eval_openai.py --shots 0    # validation (320)
+OPENAI_API_KEY=... emotions-venv/bin/python ../backend/scripts/emotions/eval_openai.py --shots 12   # with examples
+OPENAI_API_KEY=... emotions-venv/bin/python ../backend/scripts/emotions/eval_openai.py --shots 12 --test  # once
+```
+
+Compare with RoBERTa's validation micro-F1 (0.567) before looking at the test set. Results are appended to
+`external/openai-emotions/results.jsonl`.

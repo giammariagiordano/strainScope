@@ -1,19 +1,22 @@
 """Text classification stages: toxicity (ToxiCR) and sentiment polarity (Senti4SD).
 
 Both tools run in their own Python environments under EXTERNAL_DIR, as persistent subprocesses, so their
-pinned dependencies and licenses stay separate from the backend. No text leaves the machine.
+pinned dependencies and licenses stay separate from the backend. No text leaves the machine, except with
+EMOTION_BACKEND=openai, where the emotions stage sends texts to the OpenAI API.
 """
 
 import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from .. import emotion_settings
 from ..config import settings
-from ..models import Alias, Comment, Issue
+from ..models import Alias, Comment, Issue, ProjectMetric
 from ..pipeline import Stage, StageContext
 
 TOOLS_DIR = Path(__file__).resolve().parent.parent / "tools"
@@ -199,7 +202,7 @@ class SentimentStage(TextStage):
 class EmotionsStage(TextStage):
     name = "emotions"
     label = "Emotions"
-    description = "RoBERTa fine-tuned on Shaver's six emotions (Stack Overflow + GitHub gold standards, augmented); micro-F1 0.62 on GitHub, vs 0.42 for EMTk (docs/EMOTIONS.md)."
+    description = "RoBERTa fine-tuned on Shaver's six emotions (Stack Overflow + GitHub gold standards, augmented); micro-F1 0.62 on GitHub, vs 0.42 for EMTk; or an OpenAI model chosen in Settings (docs/EMOTIONS.md)."
     column = "emotions"
     empty_value = "-"
     batch_size = 512
@@ -209,20 +212,57 @@ class EmotionsStage(TextStage):
         base = settings.external_dir
         return base / "toxbert-venv" / "bin" / "python", base / "roberta-emotions-final"
 
+    @staticmethod
+    def openai_paths(model: str):
+        base = settings.external_dir / "openai-emotions"
+        return base / f"cache-{model}.jsonl", base / "examples.json"
+
     def tool_status(self):
+        cfg = emotion_settings.current()  # chosen in Settings, or EMOTION_BACKEND / OPENAI_* in the environment
+        if cfg.backend == "openai":
+            return None if cfg.api_key else "OpenAI selected but no API key is set (Settings, Emotion classifier)"
+        if cfg.backend != "roberta":
+            return f"unknown emotion classifier {cfg.backend!r} (roberta or openai)"
         python, model = self.paths()
         if not python.exists() or not (model / "thresholds.json").exists():
             return "emotion model not installed (see docs/EMOTIONS.md)"
         return None
 
     def open(self):
+        cfg = emotion_settings.current()
+        if cfg.backend == "openai":
+            # texts leave the machine here: the OpenAI API classifies them (docs/EMOTIONS.md)
+            cache, examples = self.openai_paths(cfg.model)
+            args = [cfg.model, str(cache)] + ([str(examples)] if examples.exists() else [])
+            return ExternalClassifier(Path(sys.executable), "openai_emotions_runner.py", *args, env={"OPENAI_API_KEY": cfg.api_key})
         python, model = self.paths()
         # bounded GPU memory on Apple silicon: fail instead of exhausting the machine
         env = {"PYTORCH_MPS_HIGH_WATERMARK_RATIO": "0.7", "PYTORCH_MPS_LOW_WATERMARK_RATIO": "0.5"}
         return ExternalClassifier(python, "emotions_runner.py", str(model), env=env)
 
+    def run(self, ctx: StageContext):
+        """Labels from different classifiers are not comparable: when the project was labelled by another one, its
+        labels are cleared and every text is classified again."""
+        cfg = emotion_settings.current()
+        used = f"openai:{cfg.model}" if cfg.backend == "openai" else cfg.backend
+        if not self.tool_status():
+            pid = ctx.project.id
+            mark = ctx.db.scalar(select(ProjectMetric).where(ProjectMetric.project_id == pid, ProjectMetric.key == "emotion_classifier"))
+            previous = mark.value["classifier"] if mark else "roberta"  # projects labelled before this setting existed
+            if previous != used:
+                for model in (Issue, Comment):
+                    ctx.db.execute(update(model).where(model.project_id == pid).values(emotions=None))
+                ctx.log(f"Emotion labels from {previous} cleared: classifying again with {used}")
+            if mark:
+                mark.value = {"classifier": used}
+            else:
+                ctx.db.add(ProjectMetric(project_id=pid, key="emotion_classifier", value={"classifier": used}))
+            ctx.checkpoint()
+        super().run(ctx)
+
     def store(self, row, result):
-        row.emotions = ",".join(result["emotions"])
+        if result["emotions"] is not None:  # None: the API failed or refused; retried on the next run
+            row.emotions = ",".join(result["emotions"])
 
 
 _AT_MENTION = re.compile(r"(?<![\w.])@[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})")
